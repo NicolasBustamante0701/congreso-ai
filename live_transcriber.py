@@ -296,6 +296,7 @@ async def stream_transcription(video_id: str, api_key: str, start_seconds: int =
     chunk_index = 0
     prev_text = ""
     start_real = time.monotonic()
+    abortar = False   # key inválida: cortar los DOS bucles, no solo el interno
 
     try:
         while True:
@@ -333,6 +334,7 @@ async def stream_transcription(video_id: str, api_key: str, start_seconds: int =
                                 "configurado con otro proveedor. Completá GROQ_API_KEY en "
                                 "el archivo .env y reiniciá la app."
                             )}
+                            abortar = True
                             break
                         yield {"error": f"Error al transcribir el tramo {ts}: {exc}"}
                         text = ""
@@ -347,6 +349,9 @@ async def stream_transcription(video_id: str, api_key: str, start_seconds: int =
                 # para la próxima ventana.
                 del buf[:ADVANCE_BYTES]
                 chunk_index += 1
+
+            if abortar:
+                break
 
         # Salimos del while por EOF (sin cancelación) — chequea si fue un error real.
         await proc.wait()
