@@ -147,6 +147,14 @@ def _rms(pcm: bytes) -> int:
     return int(math.sqrt(sum(m * m for m in muestras) / len(muestras)))
 
 
+def _es_error_de_key(exc) -> bool:
+    """Key de Groq ausente, inválida o sin permisos — reintentar no sirve."""
+    s = str(exc).lower()
+    return ("invalid api key" in s or "invalid_api_key" in s
+            or "error code: 401" in s or "error code: 403" in s
+            or "unauthorized" in s)
+
+
 def _is_silence(pcm: bytes) -> bool:
     """RMS del audio crudo (PCM s16le) — filtro previo a Whisper para no
     alucinar texto sobre tramos sin voz real."""
@@ -315,6 +323,17 @@ async def stream_transcription(video_id: str, api_key: str, start_seconds: int =
                     try:
                         text = await loop.run_in_executor(None, _transcribe_pcm, window, api_key)
                     except Exception as exc:
+                        # Una key inválida no se arregla sola: seguir capturando
+                        # repite el mismo 401 cada 10 s y el usuario ve un
+                        # volcado del SDK en vez de saber qué le falta.
+                        if _es_error_de_key(exc):
+                            yield {"error": (
+                                "La GROQ_API_KEY no es válida o falta. La transcripción "
+                                "en vivo usa Whisper de Groq siempre, aunque el chat esté "
+                                "configurado con otro proveedor. Completá GROQ_API_KEY en "
+                                "el archivo .env y reiniciá la app."
+                            )}
+                            break
                         yield {"error": f"Error al transcribir el tramo {ts}: {exc}"}
                         text = ""
 

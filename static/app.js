@@ -1112,15 +1112,20 @@ ${table.outerHTML}
     inputArea.style.display = '';
   }
 
+  // Los iframes arrancan en about:blank a propósito. Con src="" el navegador
+  // resuelve al documento actual, así que cada uno cargaba LA APP ENTERA
+  // dentro de sí mismo: tres copias de app.js corriendo a la vez, tres
+  // llamadas a /dashboard-metrics y las tarjetas del panel duplicadas.
+  const necesitaCarga = (f) =>
+    !f.src || f.src === 'about:blank' || f.src === window.location.href;
+
   function switchToLive() {
     setNavActive(navLive);
     chatArea2.style.display = 'none';
     inputArea.style.display = 'none';
     if (viewPdfs) viewPdfs.style.display = 'none';
     viewLive.style.display = '';
-    if (!liveIframe.src || liveIframe.src === window.location.href) {
-      liveIframe.src = '/live';
-    }
+    if (necesitaCarga(liveIframe)) liveIframe.src = '/live';
   }
 
   function switchToPdfs() {
@@ -1129,9 +1134,7 @@ ${table.outerHTML}
     inputArea.style.display = 'none';
     if (viewLive) viewLive.style.display = 'none';
     viewPdfs.style.display = '';
-    if (!pdfsIframe.src || pdfsIframe.src === window.location.href) {
-      pdfsIframe.src = '/pdfs';
-    }
+    if (necesitaCarga(pdfsIframe)) pdfsIframe.src = '/pdfs';
   }
 
   navChat.addEventListener('click', switchToChat);
