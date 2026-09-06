@@ -28,6 +28,9 @@ jobs:
       - name: Build Python server
         run: pyinstaller server.spec
 
+      - name: Fix Server executable permissions 
+         run: chmod +x dist/server/server
+
       - name: Set up Node.js 20
         uses: actions/setup-node@v4
         with:
