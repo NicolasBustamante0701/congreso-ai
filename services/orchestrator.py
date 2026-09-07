@@ -19,8 +19,7 @@ from types import SimpleNamespace
 
 from config import MAIN_MODEL, ROUTER_MODEL, logger
 from scraper import fetch_transcript_youtube
-from services import groq as groq_service
-from services import sse
+from services import llm, sse
 from services.prompt_registry import (
     ROUTER_PROMPT,
     SYSTEM_MINI,
@@ -34,6 +33,30 @@ from services.tools import STATUS_LABELS, TOOL_MAP, TOOLS
 
 # Un tool result de 7k chars ≈ 2000 tokens. Más que eso dispara el TPM.
 MAX_TOOL_RESULT_CHARS = 7000
+
+# Tope propio para las herramientas que devuelven listados largos.
+#
+# Con 7000 el JSON de un "últimos 15 días" (89 proyectos, ~400 caracteres cada
+# uno entre título, sumilla, autores y enlace) se cortaba a la mitad: el modelo
+# recibía un JSON inválido terminado en "[recortado]" y no podía clasificar por
+# temas ni citar los enlaces de los que no llegó a ver. Subirlo para todas las
+# herramientas no hace falta —las demás devuelven objetos chicos— y encarece
+# cada pedido, así que el margen extra va solo donde el listado lo justifica.
+# Medido: 89 proyectos (una consulta real de "últimos 15 días") ocupan ~49 mil
+# caracteres ya con el payload aligerado — sin sumilla duplicada, sin campos
+# vacíos y con los autores acotados a tres. 60 mil deja margen para una ventana
+# algo más cargada sin volver a cortar por la mitad.
+MAX_TOOL_RESULT_CHARS_POR_TOOL = {
+    "buscar_proyectos": 60000,
+}
+
+
+def _recortar_resultado(nombre: str, texto: str) -> str:
+    """Aplica el tope de caracteres que le corresponda a esa herramienta."""
+    tope = MAX_TOOL_RESULT_CHARS_POR_TOOL.get(nombre, MAX_TOOL_RESULT_CHARS)
+    if len(texto) <= tope:
+        return texto
+    return texto[:tope] + '... [recortado]"}'
 
 # Ventana del resumen semanal, en días hacia atrás desde hoy — lo que cuenta
 # como "esta semana" para agenda de sesiones y el corte estricto del informe.
@@ -49,10 +72,12 @@ RESUMEN_DIAS = 7
 RESUMEN_CONTEXTO_DIAS = 15
 
 # Herramientas fijas del resumen semanal — no se le deja la elección al
-# router (8B). Dejado a su criterio con tool_choice="required" terminaba
-# llamando 7-8 herramientas de golpe (fetch_interpelaciones, fetch_comisiones,
-# fetch_comisiones, buscar_agenda...) y reventaba el TPM de Groq (6k), tumbando
-# la función entera.
+# router. Dejado a su criterio con tool_choice="required" terminaba llamando
+# 7-8 herramientas de golpe (fetch_interpelaciones, fetch_comisiones,
+# fetch_comisiones, buscar_agenda...) y reventaba el límite del proveedor,
+# tumbando la función entera. Pasó con Groq y su TPM de 6k; con Gemini el techo
+# es de requests por día, así que 7-8 llamadas por resumen queman la cuota
+# igual de rápido y la lista fija sigue haciendo falta.
 #
 # fetch_interpelaciones sí se agregó a la lista fija: es la fuente de la
 # noticia política más caliente de la semana (mociones contra ministros) y
@@ -104,6 +129,60 @@ YT_ID_RE = re.compile(
 DEFAULT_DIAS_PROYECTOS = 15
 DIAS_PROYECTOS_RE = re.compile(r"(\d+)\s*d[ií]as", re.IGNORECASE)
 RECIENTE_RE = re.compile(r"\b(novedades|reciente|recientes|últim[oa]s?)\b", re.IGNORECASE)
+
+
+# ── Atajo conversacional: saltear el router ────────────────────────────────
+#
+# prompts/router.md dice "usa SIEMPRE responder_directo" para saludos, cortesía
+# y preguntas sobre el propio asistente. Medido contra Gemini: preguntarle eso
+# al router cuesta un viaje de red completo que termina, sin excepción, en
+# responder_directo — el 70% de la latencia de un "hola" se iba ahí. Cuando la
+# respuesta del router es previsible con certeza, se la saltea.
+#
+# El criterio es deliberadamente estrecho: la regex ancla el mensaje ENTERO
+# (^...$), así que "gracias, ahora dame los proyectos de ley" no matchea y sigue
+# yendo al router. Ante cualquier duda se paga el router — equivocarse para el
+# otro lado significa que el modelo grande responde sin datos, y este código ya
+# tiene historial de inventar tablas de proyectos falsos cuando le falta la
+# herramienta (ver _detecta_proyectos_por_dias).
+#
+# Los afirmativos sueltos ("sí", "dale", "ok") quedan AFUERA a propósito: si el
+# turno anterior fue "¿querés que busque los proyectos?", ese "sí" sí necesita
+# herramienta y el router es quien tiene el contexto para verlo.
+CONVERSACIONAL_RE = re.compile(
+    r"^[\s¡¿]*(?:"
+    r"hola|holis?|buenas|buen[oa]s?\s+(?:d[ií]as?|tardes|noches)|"
+    r"qu[eé]\s+tal|c[oó]mo\s+(?:est[aá]s|va|andas|and[aá]s)|"
+    r"gracias|muchas\s+gracias|mil\s+gracias|te\s+agradezco|"
+    r"chau|adi[oó]s|hasta\s+luego|nos\s+vemos|"
+    r"ja(?:ja)+|je(?:je)+|"
+    r"qui[eé]n\s+(?:sos|eres)|c[oó]mo\s+te\s+llam[aá]s|"
+    r"qu[eé]\s+(?:pod[eé]s|puedes|sab[eé]s|sabes)\s+hacer|"
+    r"para\s+qu[eé]\s+(?:serv[ií]s|sirves)|"
+    r"en\s+qu[eé]\s+(?:me\s+)?(?:pod[eé]s|puedes)\s+ayudar"
+    r")[\s!¡?¿.,…\-]*$",
+    re.IGNORECASE,
+)
+
+# Red de seguridad: si aparece cualquier término del dominio, va al router
+# aunque la frase haya matcheado arriba.
+DOMINIO_RE = re.compile(
+    r"\b(proyecto|ley|leyes|comisi[oó]n|comisiones|congreso|senado|diputad|"
+    r"sesi[oó]n|sesiones|pleno|dictamen|dictamenes|dict[aá]menes|citaci[oó]n|"
+    r"moci[oó]n|votaci[oó]n|expediente|congresista|ministr|interpelaci[oó]n|"
+    r"decreto|norma|agenda|pdf|documento)",
+    re.IGNORECASE,
+)
+
+
+def _es_conversacional(texto: str) -> bool:
+    """True solo si el mensaje entero es saludo, cortesía o meta-pregunta."""
+    t = (texto or "").strip()
+    if not t or len(t) > 80:
+        return False
+    if DOMINIO_RE.search(t):
+        return False
+    return bool(CONVERSACIONAL_RE.match(t))
 
 
 def _detecta_proyectos_por_dias(texto: str) -> int | None:
@@ -181,7 +260,7 @@ class ChatOrchestrator:
 
     def __init__(self, messages: list, client=None):
         self.messages = messages or []
-        self.client = client or groq_service.get_client()
+        self.client = client or llm.get_client()
         ahora = datetime.now()
         self.hoy = ahora.strftime("%d/%m/%Y")
         # Ventana del resumen semanal: los 7 días que terminan hoy.
@@ -197,6 +276,7 @@ class ChatOrchestrator:
         self.has_sesion = False
         self.has_expediente_en_contexto = False
         self.doc_en_contexto = False
+        self.es_conversacional = False
         self.conversation: list = []
 
         # Estado que rellenan las fases 2 y 3
@@ -238,6 +318,15 @@ class ChatOrchestrator:
         self.has_sesion = (
             "youtube.com" in low_last or "youtu.be" in low_last
             or "transcript" in low_last or "[sesión" in low_last
+        )
+
+        # Saludo/cortesía puro: se saltea el router (ver CONVERSACIONAL_RE).
+        # No aplica al resumen ni al override de proyectos, que ya tienen sus
+        # propias herramientas fijas y ni pasan por Fase 1.
+        self.es_conversacional = (
+            not self.is_resumen
+            and self.forzar_dias_proyectos is None
+            and _es_conversacional(self.last_msg)
         )
 
         recent_assistant = " ".join(
@@ -378,20 +467,20 @@ class ChatOrchestrator:
         El router falló. Si fue por un tool_call malformado, respondemos igual
         con el modelo grande y sin herramientas; si no, mostramos el error.
         """
-        if not groq_service.is_tool_format_error(exc):
-            yield sse.error(groq_service.friendly_error(exc))
+        if not llm.is_tool_format_error(exc):
+            yield sse.error(llm.friendly_error(exc))
             return
 
         msgs = [{"role": "system", "content": self.system_base}] + self.conversation
         try:
-            async for delta in groq_service.stream_deltas(
+            async for delta in llm.stream_deltas(
                 self.client, msgs, model=MAIN_MODEL, max_tokens=2048
             ):
                 yield sse.text(delta)
             yield sse.DONE
         except Exception as e2:
             logger.error("Fallback de Fase 1 falló: %s", e2)
-            yield sse.error(groq_service.friendly_error(e2))
+            yield sse.error(llm.friendly_error(e2))
 
     # ── Fase 2: ejecución de herramientas ────────────────────────────────────
 
@@ -474,9 +563,7 @@ class ChatOrchestrator:
 
             result = await self._run_tool(name, args)
 
-            result_str = json.dumps(result, ensure_ascii=False)
-            if len(result_str) > MAX_TOOL_RESULT_CHARS:
-                result_str = result_str[:MAX_TOOL_RESULT_CHARS] + '... [recortado]"}'
+            result_str = _recortar_resultado(name, json.dumps(result, ensure_ascii=False))
 
             self.tool_msgs.append({
                 "role": "user",
@@ -501,9 +588,7 @@ class ChatOrchestrator:
 
             result = await self._run_tool(name, args)
 
-            result_str = json.dumps(result, ensure_ascii=False)
-            if len(result_str) > MAX_TOOL_RESULT_CHARS:
-                result_str = result_str[:MAX_TOOL_RESULT_CHARS] + '... [recortado]"}'
+            result_str = _recortar_resultado(name, json.dumps(result, ensure_ascii=False))
 
             self.tool_msgs.append({
                 "role": "user",
@@ -578,7 +663,16 @@ class ChatOrchestrator:
             return 4000
         if self.tools_usados:
             # Proyectos/agenda: respuesta más corta, menos presión sobre el TPM.
-            return 1800
+            #
+            # Salvo cuando la herramienta devolvió un listado grande. Una fila
+            # de la tabla de proposiciones ronda los 70 tokens, así que un
+            # "últimos 15 días" (89 proyectos) necesita más de 6000 y con 1800
+            # la tabla se cortaba a la cuarta fila, en mitad de un título.
+            # El presupuesto sigue el tamaño de lo que vino en vez de ser fijo:
+            # así el caso grande entra entero sin inflar cada respuesta corta,
+            # que son la mayoría.
+            chars = sum(len(m.get("content") or "") for m in self.tool_msgs)
+            return 14000 if chars > 12000 else 1800
         return 2500
 
     async def _stream_final(self, msgs, max_tokens):
@@ -592,7 +686,7 @@ class ChatOrchestrator:
         """
         nombres = _extraer_nombres_normalizados(self.tool_msgs) if self.tool_msgs else set()
         buffer = ""
-        async for kind, payload in groq_service.stream_with_retry(
+        async for kind, payload in llm.stream_with_retry(
             self.client, msgs, model=MAIN_MODEL, max_tokens=max_tokens
         ):
             if kind == "text":
@@ -635,6 +729,13 @@ class ChatOrchestrator:
             tools = (("buscar_proyectos", {"dias": self.forzar_dias_proyectos}),)
             async for ev in self._phase2_tools_fijas(tools):
                 yield ev
+        elif self.es_conversacional:
+            # Saludo o cortesía: el router siempre contesta responder_directo
+            # acá, así que se ahorra ese viaje de red entero (ver
+            # CONVERSACIONAL_RE). Fase 3 queda igual que si hubiera pasado por
+            # el router: mismo system prompt, mismo historial, sin tool_msgs.
+            logger.info("Atajo conversacional: se saltea el router")
+            self.solo_responder_directo = True
         else:
             try:
                 choice = await self._phase1()

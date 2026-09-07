@@ -11,16 +11,26 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv()
-
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("congreso-ai")
 
 # ── Rutas ────────────────────────────────────────────────────────────────────
 # Con PyInstaller los datos van a sys._MEIPASS; en dev, al directorio del repo.
-BASE_DIR    = Path(sys._MEIPASS) if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
+FROZEN      = getattr(sys, "frozen", False)
+BASE_DIR    = Path(sys._MEIPASS) if FROZEN else Path(__file__).resolve().parent
 STATIC_DIR  = BASE_DIR / "static"
 PROMPTS_DIR = BASE_DIR / "prompts"
+
+# ── Credenciales ─────────────────────────────────────────────────────────────
+# `load_dotenv()` a secas busca el .env caminando hacia arriba desde el cwd, y
+# en el .app empaquetado el cwd lo fija Electron: si algún día cambia, las keys
+# desaparecen sin ruido y la app abre muerta. Por eso la ruta es explícita.
+#
+# Empaquetado el .env NO va dentro de _MEIPASS: viaja al lado del ejecutable,
+# en Resources/server/.env, porque `extraResources` copia dist/server tal cual
+# y el workflow escribe ahí las keys desde los secrets (ver build-mac.yml).
+ENV_FILE = (Path(sys.executable).resolve().parent if FROZEN else BASE_DIR) / ".env"
+load_dotenv(ENV_FILE)
 
 # GROQ_API_KEY es independiente del selector de proveedor de abajo: la
 # transcripción de audio en vivo (Whisper, en live_transcriber.py y
@@ -32,12 +42,18 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 # El producto final habla con la API de OpenAI. Mientras tanto, para probar sin
 # quemar cuota/plata, se puede apuntar a cualquier endpoint compatible con el
 # formato OpenAI (Gemini y Groq lo son) con solo cambiar LLM_PROVIDER en .env —
-# el resto del código (services/groq.py, orchestrator, etc.) no cambia, porque
+# el resto del código (services/llm.py, orchestrator, etc.) no cambia, porque
 # todos hablan a través del mismo cliente `openai.OpenAI(base_url=...)`.
 #
 # Para pasar a producción con OpenAI real: LLM_PROVIDER=openai + OPENAI_API_KEY
 # en .env. No hace falta tocar nada más.
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "groq").lower()
+#
+# El default es "gemini" porque es el proveedor que se usa de verdad, acá y en
+# el DMG (ver build-mac.yml). Antes era "groq": si por lo que sea el .env no
+# carga, la app terminaba pidiéndole a Groq con la key vacía y el error que
+# salía era "falta la GROQ_API_KEY" — un desvío hacia un proveedor que no es
+# el que está configurado.
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "gemini").lower()
 
 _PROVIDERS = {
     "groq": {
@@ -70,7 +86,7 @@ _PROVIDERS = {
     },
 }
 
-_provider_cfg = _PROVIDERS.get(LLM_PROVIDER, _PROVIDERS["groq"])
+_provider_cfg = _PROVIDERS.get(LLM_PROVIDER, _PROVIDERS["gemini"])
 LLM_BASE_URL  = _provider_cfg["base_url"]
 LLM_API_KEY   = _provider_cfg["api_key"]
 ROUTER_MODEL  = _provider_cfg["router_model"]

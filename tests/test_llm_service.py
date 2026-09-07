@@ -6,7 +6,7 @@ El caso que motivó estos tests: con una GEMINI_API_KEY inválida la app decía
 problema de red — y además reintentaba, porque Gemini responde 400 (no 401) a
 una key mala y eso caía en la heurística de "tool_call malformado".
 """
-from services import groq as groq_service
+from services import llm
 
 # Textos reales capturados del SDK con keys inválidas (22/08/2026).
 ERROR_GEMINI = (
@@ -25,13 +25,13 @@ ERROR_RATE_LIMIT = "Error code: 429 - rate limit reached, please try again in 2.
 
 
 def test_detecta_key_invalida_en_ambos_proveedores():
-    assert groq_service.is_auth_error(ERROR_GEMINI)
-    assert groq_service.is_auth_error(ERROR_GROQ)
+    assert llm.is_auth_error(ERROR_GEMINI)
+    assert llm.is_auth_error(ERROR_GROQ)
 
 
 def test_no_confunde_otros_errores_con_auth():
-    assert not groq_service.is_auth_error(ERROR_TOOL_MALFORMADO)
-    assert not groq_service.is_auth_error(ERROR_RATE_LIMIT)
+    assert not llm.is_auth_error(ERROR_TOOL_MALFORMADO)
+    assert not llm.is_auth_error(ERROR_RATE_LIMIT)
 
 
 def test_key_invalida_no_se_toma_por_tool_call_malformado():
@@ -40,18 +40,18 @@ def test_key_invalida_no_se_toma_por_tool_call_malformado():
     son dos llamadas fallidas en vez de una y el usuario igual no se entera de
     cuál era el problema.
     """
-    assert not groq_service.is_tool_format_error(ERROR_GEMINI)
-    assert groq_service.is_tool_format_error(ERROR_TOOL_MALFORMADO)
+    assert not llm.is_tool_format_error(ERROR_GEMINI)
+    assert llm.is_tool_format_error(ERROR_TOOL_MALFORMADO)
 
 
 def test_mensaje_de_auth_dice_qué_variable_completar():
-    msg = groq_service.friendly_error(ERROR_GEMINI)
+    msg = llm.friendly_error(ERROR_GEMINI)
     assert ".env" in msg
     # El nombre de la variable depende del proveedor activo en config.
-    assert any(v in msg for v in groq_service._ENV_KEY.values())
+    assert any(v in msg for v in llm._ENV_KEY.values())
     assert "problema al conectar" not in msg.lower()
 
 
 def test_rate_limit_sigue_teniendo_su_propio_mensaje():
-    msg = groq_service.friendly_error(ERROR_RATE_LIMIT)
+    msg = llm.friendly_error(ERROR_RATE_LIMIT)
     assert "espera" in msg.lower() or "límite" in msg.lower()

@@ -68,6 +68,44 @@ def _client():
     return httpx.AsyncClient(timeout=TIMEOUT, verify=False,
                              follow_redirects=True, headers=HEADERS)
 
+
+# ── Lista blanca de dominios ─────────────────────────────────────────────────
+# Casi todos los pedidos van a una URL constante de acá arriba, pero no todos:
+# el adjunto de un expediente, las síntesis de agenda y la agenda del Pleno se
+# piden a enlaces sacados del HTML/JSON que devuelve el propio Congreso. Si una
+# de esas páginas trae un enlace externo — un banner, un acortador, un dominio
+# que cambió de manos — el scraper lo seguiría sin preguntar y el modelo
+# terminaría resumiendo contenido de un tercero como si fuera oficial.
+#
+# Vale la pena el candado porque _client() va con verify=False (certs
+# autofirmados del Congreso): fuera de esos dominios, sin validar el
+# certificado, no hay ninguna garantía de con quién se está hablando.
+DOMINIO_OFICIAL = "congreso.gob.pe"
+
+
+def _url_permitida(url: str) -> bool:
+    """True solo si la URL es del dominio del Congreso o un subdominio suyo."""
+    try:
+        host = (urllib.parse.urlparse(url).hostname or "").lower()
+    except ValueError:
+        return False
+    # El chequeo es por sufijo con el punto: "congreso.gob.pe.evil.com" no pasa,
+    # y "notcongreso.gob.pe" tampoco.
+    return host == DOMINIO_OFICIAL or host.endswith("." + DOMINIO_OFICIAL)
+
+
+async def _get_oficial(c, url, **kw):
+    """
+    GET que solo sale hacia el dominio del Congreso.
+
+    Devuelve None si la URL apunta a otro lado, para que quien llama lo saltee
+    y siga con el resto en vez de romper la respuesta entera.
+    """
+    if not _url_permitida(url):
+        logger.warning("Enlace externo descartado (no es del Congreso): %s", url)
+        return None
+    return await c.get(url, **kw)
+
 def _fmt_date(s):
     """
     Fecha a dd/mm/aaaa, el formato que usa el portal del Congreso.
@@ -413,8 +451,16 @@ async def _fetch_spley_por_materia(materia: str, limit: int = 20):
 
 
 async def fetch_proyectos(autor=None, comision=None, numero=None, materia=None,
-                          legislatura="2021-2026", limit=20, dias=None):
+                          legislatura="2021-2026", limit=None, dias=None):
     from datetime import timedelta
+
+    # `dias` es una ventana temporal cerrada ("los últimos 15 días"), no una
+    # muestra: con el default de 20 una consulta legítima devolvía 20 de 89 y
+    # marcaba truncado=true, así que el modelo no podía armar el cuadro por
+    # temas y terminaba preguntándole al usuario si reintentaba. Pedir un
+    # rango de fechas es pedir todo lo que cae adentro.
+    if limit is None:
+        limit = 100 if dias else 20
 
     async with _client() as c:
 
@@ -424,8 +470,12 @@ async def fetch_proyectos(autor=None, comision=None, numero=None, materia=None,
             if result is not None:
                 return result
 
-        # Con dias: traer más items para filtrar por fecha luego
-        fetch_size = min(100, limit * 5) if dias else limit
+        # Con dias: traer bastante más de lo pedido, porque el filtro por
+        # fecha descarta del lado del cliente. El techo era 100, el mismo
+        # número que ahora puede pedir `limit`, así que una ventana con más
+        # de 100 proyectos quedaba recortada por el fetch antes de llegar
+        # siquiera al filtro.
+        fetch_size = 300 if dias else limit
         payload: dict = {"page": 0, "size": fetch_size}
 
         # SPLEY ignora strBusqueda por completo (hasta un texto inexistente
@@ -571,12 +621,13 @@ def _format_proyectos(items, total_disponible: int | None = None):
     out = []
     for p in items:
         num = p.get("pleyNum") or ""
-        out.append({
+        titulo = p.get("titulo") or ""
+        item = {
             "numero":              p.get("proyectoLey") or num or "",
             "fecha_presentacion":  _fmt_date(p.get("fecPresentacion") or ""),
             "estado":              p.get("desEstado") or "",
-            "titulo":              p.get("titulo") or "",
-            "sumilla":             p.get("sumilla") or p.get("titulo") or "",
+            "titulo":              titulo,
+            "sumilla":             p.get("sumilla") or titulo,
             "proponente":          p.get("desProponente") or "",
             "autor":               _normalizar_lista_autores(p.get("autores")) or p.get("desProponente") or "",
             "comision":            p.get("desComision") or "",
@@ -584,7 +635,38 @@ def _format_proyectos(items, total_disponible: int | None = None):
             "legislatura":         p.get("desLegis") or "",
             "camara":              CAMARAS.get(p.get("_camara") or "C", "Congreso"),
             "enlace":              _enlace_expediente(p) or f"{SPLEY_PORTAL}/search",
-        })
+        }
+
+        # El listado de SPLEY no trae sumilla propia (solo el expediente la
+        # tiene), así que la línea de arriba caía al título y cada ítem viajaba
+        # con el mismo texto largo dos veces. En una consulta de 15 días eran
+        # 15 mil caracteres de duplicado exacto, suficiente para empujar el
+        # JSON por encima del tope y que al modelo le llegara cortado.
+        # `comision`, `grupo_parlamentario` y `legislatura` vienen siempre
+        # vacíos en este endpoint: la clave sola tampoco es gratis.
+        if item["sumilla"] == titulo:
+            del item["sumilla"]
+        for k in ("comision", "grupo_parlamentario", "legislatura", "estado", "proponente"):
+            if not item.get(k):
+                item.pop(k, None)
+        # Suele venir repetido del proponente cuando el proyecto no es de un
+        # congresista ("Otros Poderes del Estado" en los dos campos).
+        if item.get("proponente") and item["proponente"] == item.get("autor"):
+            del item["proponente"]
+
+        # El formato de salida ya solo muestra tres autores y "y N más" (ver
+        # workflow_proyectos.md), así que mandar la lista entera es peso que el
+        # modelo descarta igual: era el campo más pesado del listado, 224
+        # caracteres por ítem contra 173 del título.
+        # OJO: el separador es ";", no "," — lo pone _normalizar_lista_autores.
+        # Los nombres propios no traen ";", así que cortar por ahí es seguro;
+        # cortar por coma no lo era y además no encontraba nada.
+        autores = [a.strip() for a in re.split(r"\s*;\s*", item.get("autor") or "") if a.strip()]
+        if len(autores) > 3:
+            item["autor"] = "; ".join(autores[:3])
+            item["autores_restantes"] = len(autores) - 3
+
+        out.append(item)
     # `total` es lo que se devuelve; `total_disponible` lo que había antes de
     # cortar por `limit`. Sin la distinción el modelo leía el total truncado y
     # afirmaba "van 20 en total" cuando eran 40, y sacaba conclusiones sobre las
@@ -1496,9 +1578,12 @@ async def fetch_formula_legal(numero_proyecto: str):
     # cliente genérico de services/pdf.py, que da 400/403 acá.
     try:
         async with _client() as c:
-            resp = await c.get(pdf_adjunto["url"])
+            resp = await _get_oficial(c, pdf_adjunto["url"])
     except Exception as e:
         return {"error": f"No se pudo descargar el PDF del proyecto: {e}"}
+
+    if resp is None:
+        return {"error": "El adjunto del proyecto apunta fuera del Congreso; no se descargó."}
 
     if not pdf_service.looks_like_pdf(resp):
         return {"error": f"El adjunto no es un PDF válido (código {resp.status_code})."}
@@ -1564,8 +1649,8 @@ async def fetch_agenda_comisiones(dias: int = 2, comision: str = None):
         sintesis = []
         for e in vigentes[:3]:
             try:
-                rd = await c.get(e["enlace"])
-                if rd.status_code != 200:
+                rd = await _get_oficial(c, e["enlace"])
+                if rd is None or rd.status_code != 200:
                     continue
                 dsoup = BeautifulSoup(rd.text, "html.parser")
                 texto = dsoup.get_text(separator="\n", strip=True)
@@ -1626,7 +1711,9 @@ async def fetch_agenda_pleno():
             return {"error": "No se encontraron agendas del Pleno publicadas."}
 
         titulo, enlace = docs[0]  # la más reciente
-        rd = await c.get(enlace)
+        rd = await _get_oficial(c, enlace)
+        if rd is None:
+            return {"error": "La agenda del Pleno apunta fuera del Congreso; no se descargó."}
         if rd.status_code != 200:
             return {"error": "No se pudo descargar la agenda del Pleno."}
 

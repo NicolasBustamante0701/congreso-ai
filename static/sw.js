@@ -5,7 +5,7 @@
 // indefinidamente (la sesión es `persist:congreso` y sobrevive reinicios).
 // El servidor es localhost, así que la red siempre está disponible y el caché
 // solo tiene sentido como respaldo si el backend todavía no levantó.
-const CACHE = 'congreso-ai-v5';
+const CACHE = 'diana-v7';
 const ASSETS = ['/', '/static/style.css', '/static/app.js'];
 
 self.addEventListener('install', e => {

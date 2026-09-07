@@ -5,31 +5,42 @@
 
   function applyTheme(dark) {
     html.dataset.theme = dark ? 'dark' : 'light';
-    document.getElementById('dark-icon-moon').style.display = dark ? 'none' : '';
-    document.getElementById('dark-icon-sun').style.display  = dark ? ''     : 'none';
+    // Dos controles muestran el estado del tema: el ítem del menú de perfil
+    // (con rótulo "Modo oscuro") y el botón suelto de la esquina superior
+    // derecha. El del menú usa la luna como "activar modo oscuro"; el de la
+    // esquina, en cambio, indica el tema vigente — sol en claro, luna en
+    // oscuro (ver captura del diseño).
+    const icon = (id, visible) => {
+      const el = document.getElementById(id);
+      if (el) el.style.display = visible ? '' : 'none';
+    };
+    icon('dark-icon-moon',  !dark);
+    icon('dark-icon-sun',    dark);
+    icon('theme-icon-sun',  !dark);
+    icon('theme-icon-moon',  dark);
     localStorage.setItem(DARK_KEY, dark ? '1' : '0');
     // Live y PDFs viven en iframes con su propio document: no heredan el
     // [data-theme] del padre solos. Les avisamos por postMessage para que
     // el cambio se vea al toque si ya están abiertos (si no, leen el mismo
     // localStorage al cargar — ver live.html/pdfs.html).
-    for (const id of ['live-iframe', 'pdfs-iframe']) {
+    for (const id of ['live-iframe', 'pdfs-iframe', 'expediente-iframe']) {
       document.getElementById(id)?.contentWindow?.postMessage({ type: 'theme', dark }, '*');
     }
   }
 
   applyTheme(localStorage.getItem(DARK_KEY) === '1');
 
-  document.getElementById('dark-toggle').addEventListener('click', () => {
-    applyTheme(html.dataset.theme !== 'dark');
-  });
+  const toggleTheme = () => applyTheme(html.dataset.theme !== 'dark');
+  document.getElementById('dark-toggle').addEventListener('click', toggleTheme);
+  document.getElementById('theme-btn')?.addEventListener('click', toggleTheme);
 
   // ── Color de acento (configurable) ────────────────
-  const ACCENT_KEY     = 'congreso_accent';
-  const ACCENT_DEFAULT = '#e53e3e';
+  const ACCENT_KEY     = 'diana_accent';
+  const ACCENT_DEFAULT = '#111111';
 
   function hexToRgb(hex) {
     const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-    return m ? { r: parseInt(m[1], 16), g: parseInt(m[2], 16), b: parseInt(m[3], 16) } : { r: 229, g: 62, b: 62 };
+    return m ? { r: parseInt(m[1], 16), g: parseInt(m[2], 16), b: parseInt(m[3], 16) } : { r: 17, g: 17, b: 17 };
   }
   function shade(hex, percent) {
     const { r, g, b } = hexToRgb(hex);
@@ -69,6 +80,10 @@
     document.documentElement.style.setProperty('--accent-fg', `rgb(${fg.r},${fg.g},${fg.b})`);
 
     localStorage.setItem(ACCENT_KEY, color);
+    syncAccentUI(color);
+  }
+
+  function syncAccentUI(color) {
     document.querySelectorAll('.accent-swatch').forEach(sw => {
       sw.classList.toggle('active', sw.dataset.color.toLowerCase() === color.toLowerCase());
     });
@@ -76,26 +91,32 @@
     if (customInput) customInput.value = color;
   }
 
-  applyAccent(localStorage.getItem(ACCENT_KEY) || ACCENT_DEFAULT);
+  // Sin acento elegido no se toca ninguna variable: manda el CSS, que define
+  // --accent claro u oscuro según el tema. Fijarlo inline acá (como se hacía
+  // antes, cuando el default era rojo y se veía en los dos temas) dejaría el
+  // negro por defecto invisible sobre el fondo del modo oscuro.
+  const storedAccent = localStorage.getItem(ACCENT_KEY);
+  if (storedAccent) applyAccent(storedAccent);
+  else              syncAccentUI(ACCENT_DEFAULT);
 
   // ── Color de cada tarjeta de métrica (independiente del acento) ───
   // Antes eran fijos (rosa/violeta/índigo, ver nuevaimagenfront.png) — el
   // usuario pidió poder cambiarlos, uno por uno, sin que dependan del
   // selector de acento general.
   const METRIC_COLOR_DEFAULTS = {
-    sesion:     '#f4425a',
-    proyectos:  '#8b6ef5',
-    comisiones: '#6366f1',
-    citaciones: '#f4425a',
+    sesion:     '#111111',
+    proyectos:  '#111111',
+    comisiones: '#111111',
+    citaciones: '#111111',
   };
-  const METRIC_COLOR_KEY = 'congreso_metric_colors';
+  const METRIC_COLOR_KEY = 'diana_metric_colors';
 
+  // Solo lo que el usuario eligió — sin mezclar los valores de fábrica. Si
+  // se mezclaran, al tocar UNA tarjeta se persistirían las cuatro y las tres
+  // no elegidas perderían el fallback por tema.
   function loadMetricColors() {
-    try {
-      return { ...METRIC_COLOR_DEFAULTS, ...JSON.parse(localStorage.getItem(METRIC_COLOR_KEY) || '{}') };
-    } catch {
-      return { ...METRIC_COLOR_DEFAULTS };
-    }
+    try   { return JSON.parse(localStorage.getItem(METRIC_COLOR_KEY) || '{}'); }
+    catch { return {}; }
   }
 
   function applyMetricColor(key, color) {
@@ -109,8 +130,9 @@
 
   const initialMetricColors = loadMetricColors();
   for (const key of Object.keys(METRIC_COLOR_DEFAULTS)) {
-    applyMetricColor(key, initialMetricColors[key]);
     const input = document.getElementById(`metric-color-${key}`);
+    if (initialMetricColors[key]) applyMetricColor(key, initialMetricColors[key]);
+    else if (input) input.value = METRIC_COLOR_DEFAULTS[key];
     if (input) input.addEventListener('input', (e) => applyMetricColor(key, e.target.value));
   }
 
@@ -123,7 +145,10 @@
     accentPopover.style.display = isOpen ? 'block' : 'none';
   }
 
-  settingsBtn.addEventListener('click', (e) => {
+  // #settings-btn se sacó del header con el rediseño (su lugar lo ocupa el
+  // toggle de tema). El popover se abre desde el menú de perfil → "Color de
+  // acento"; el listener queda por si el botón vuelve.
+  settingsBtn?.addEventListener('click', (e) => {
     e.stopPropagation();
     toggleAccentPopover();
   });
@@ -138,7 +163,7 @@
     applyAccent(e.target.value);
   });
   document.addEventListener('click', (e) => {
-    if (!accentPopover.contains(e.target) && e.target !== settingsBtn && !settingsBtn.contains(e.target)) {
+    if (!accentPopover.contains(e.target) && e.target !== settingsBtn && !settingsBtn?.contains(e.target)) {
       toggleAccentPopover(false);
     }
   });
@@ -193,6 +218,13 @@
   let convs    = [];
   let activeId = null;
   let streaming= false;
+  // Controlador para poder cortar una respuesta en curso. `streaming` bloquea
+  // TODA la interfaz (chips, tarjetas de métricas, resumen y enviar), y desde
+  // que las respuestas largas —un cuadro de 89 proposiciones son ~14 mil
+  // tokens— pueden tardar más de un minuto, quedarse sin salida durante todo
+  // ese rato hace que la app parezca colgada. Con esto el botón de enviar se
+  // convierte en "detener" mientras trabaja.
+  let abortCtl = null;
 
   function loadConvs() {
     try { convs = JSON.parse(localStorage.getItem(STORE)) || []; }
@@ -442,7 +474,7 @@
       const ver = document.createElement('button');
       ver.className = 'metric-card-ver';
       ver.type = 'button';
-      ver.innerHTML = `${METRIC_VER_LABEL[key]} <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 2.5L8 6l-4 3.5"/></svg>`;
+      ver.innerHTML = `${METRIC_VER_LABEL[key]} <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 6h9M7 2.5L10.5 6 7 9.5"/></svg>`;
       ver.addEventListener('click', () => { if (!streaming) send(METRIC_CMD[key]); });
       card.appendChild(ver);
     };
@@ -506,6 +538,30 @@
     scrollBottom();
   }
 
+  // ── Estado de "generando" ─────────────────────────
+  const SVG_ENVIAR  = '<svg viewBox="0 0 20 20" fill="currentColor"><path d="M10 2l8 16-8-4-8 4z"/></svg>';
+  const SVG_DETENER = '<svg viewBox="0 0 20 20" fill="currentColor"><rect x="5" y="5" width="10" height="10" rx="2"/></svg>';
+
+  function setStreaming(activo) {
+    streaming = activo;
+    if (activo) {
+      sendBtn.disabled  = false;             // habilitado, pero ahora detiene
+      sendBtn.innerHTML = SVG_DETENER;
+      sendBtn.title     = 'Detener la respuesta';
+      sendBtn.classList.add('is-stop');
+    } else {
+      abortCtl = null;
+      sendBtn.innerHTML = SVG_ENVIAR;
+      sendBtn.title     = 'Enviar';
+      sendBtn.classList.remove('is-stop');
+      sendBtn.disabled  = !msgInput.value.trim();
+    }
+  }
+
+  function detenerRespuesta() {
+    if (abortCtl) abortCtl.abort();
+  }
+
   // ── Chat send ─────────────────────────────────────
   async function send(textOverride, sectorOverride) {
     let text = (textOverride || msgInput.value).trim();
@@ -542,8 +598,8 @@
 
     msgInput.value = '';
     msgInput.style.height = 'auto';
-    sendBtn.disabled = true;
-    streaming = true;
+    abortCtl = new AbortController();
+    setStreaming(true);
     const assistantEl = appendAssistantTyping();
     let fullText   = '';
     let toolCalled = false;  // true si el modelo consultó una herramienta
@@ -553,6 +609,7 @@
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messages: conv.messages }),
+        signal: abortCtl.signal,
       });
 
       const reader  = resp.body.getReader();
@@ -587,7 +644,14 @@
         }
       }
     } catch (err) {
-      renderContent(assistantEl, `**Error de conexión:** ${err.message}`);
+      if (err.name === 'AbortError') {
+        // Cortada a propósito: lo que ya llegó se conserva, no es un error.
+        renderContent(assistantEl, fullText
+          ? fullText + '\n\n_(respuesta detenida)_'
+          : '_Respuesta detenida._');
+      } else {
+        renderContent(assistantEl, `**Error de conexión:** ${err.message}`);
+      }
     } finally {
       // Ojo: esto va sí o sí en el finally. Si `streaming` se queda en true
       // (por ej. si saveConvs revienta con el localStorage lleno), los chips
@@ -607,8 +671,7 @@
         console.error('Error al guardar/renderizar la respuesta:', e);
       }
 
-      streaming = false;
-      sendBtn.disabled = !msgInput.value.trim();
+      setStreaming(false);
       scrollBottom();
     }
   }
@@ -726,7 +789,7 @@
   @media print{body{padding:20px 30px} a{text-decoration:none}}
 </style></head><body>
 ${html}
-<div class="ftr">Generado por Solón — Sistema de Monitoreo Parlamentario · ${date}</div>
+<div class="ftr">Generado por Diana — Sistema de Monitoreo Parlamentario · ${date}</div>
 </body></html>`;
   }
 
@@ -930,7 +993,7 @@ ${table.outerHTML}
     cmdChips.style.display = 'none';
     appendUserBubble(`📄 ${titulo}`);
     const assistantEl = appendAssistantTyping();
-    streaming = true; sendBtn.disabled = true;
+    setStreaming(true);
 
     try {
       const res  = await fetch('/load-pdf-url', {
@@ -949,7 +1012,7 @@ ${table.outerHTML}
     } catch (err) {
       renderContent(assistantEl, `**Error al cargar el PDF:** ${err.message}`);
     }
-    streaming = false; sendBtn.disabled = !msgInput.value.trim(); scrollBottom();
+    setStreaming(false); scrollBottom();
   }
 
   // ── PDF upload (archivo local) ────────────────────
@@ -962,7 +1025,7 @@ ${table.outerHTML}
     cmdChips.style.display = 'none';
     appendUserBubble(`📄 ${file.name}`);
     const assistantEl = appendAssistantTyping();
-    streaming = true; sendBtn.disabled = true;
+    setStreaming(true);
     try {
       const form = new FormData();
       form.append('file', file);
@@ -978,7 +1041,7 @@ ${table.outerHTML}
     } catch (err) {
       renderContent(assistantEl, `**Error al cargar el PDF:** ${err.message}`);
     }
-    streaming = false; sendBtn.disabled = !msgInput.value.trim(); scrollBottom();
+    setStreaming(false); scrollBottom();
   }
 
   document.getElementById('pdf-input').addEventListener('change', e => {
@@ -990,7 +1053,7 @@ ${table.outerHTML}
   newChatBtn.addEventListener('click', newChat);
   newChatWideBtn.addEventListener('click', newChat);
 
-  sendBtn.addEventListener('click', () => send());
+  sendBtn.addEventListener('click', () => (streaming ? detenerRespuesta() : send()));
 
   msgInput.addEventListener('input', () => {
     msgInput.style.height = 'auto';
@@ -1094,8 +1157,10 @@ ${table.outerHTML}
   const navPdfs    = document.getElementById('nav-pdfs');
   const viewLive   = document.getElementById('view-live');
   const viewPdfs   = document.getElementById('view-pdfs');
+  const viewExp    = document.getElementById('view-expediente');
   const liveIframe = document.getElementById('live-iframe');
   const pdfsIframe = document.getElementById('pdfs-iframe');
+  const expIframe  = document.getElementById('expediente-iframe');
   const chatArea2  = document.getElementById('chat-area');
   const inputArea  = document.querySelector('.input-area');
 
@@ -1108,8 +1173,32 @@ ${table.outerHTML}
     setNavActive(navChat);
     if (viewLive) viewLive.style.display = 'none';
     if (viewPdfs) viewPdfs.style.display = 'none';
+    if (viewExp)  viewExp.style.display  = 'none';
     chatArea2.style.display = '';
     inputArea.style.display = '';
+  }
+
+  // ── Vista de expediente ──────────────────────────
+  // Se abre al clickear el número/sumilla de una proposición en una respuesta
+  // del chat. Antes ese link salía al portal del Congreso en el navegador
+  // (main.js lo mandaba a shell.openExternal): se perdía el hilo y había que
+  // volver a la app a mano.
+  function switchToExpediente(numero) {
+    setNavActive(null);
+    chatArea2.style.display = 'none';
+    inputArea.style.display = 'none';
+    if (viewLive) viewLive.style.display = 'none';
+    if (viewPdfs) viewPdfs.style.display = 'none';
+    viewExp.style.display = '';
+
+    // Recargar siempre: a diferencia de Live y PDFs, esta vista depende del
+    // proyecto pedido, así que reusar el iframe mostraría el expediente
+    // anterior.
+    const destino = `/expediente-view?numero=${encodeURIComponent(numero)}`;
+    if (expIframe.dataset.numero !== numero) {
+      expIframe.dataset.numero = numero;
+      expIframe.src = destino;
+    }
   }
 
   // Los iframes arrancan en about:blank a propósito. Con src="" el navegador
@@ -1124,6 +1213,7 @@ ${table.outerHTML}
     chatArea2.style.display = 'none';
     inputArea.style.display = 'none';
     if (viewPdfs) viewPdfs.style.display = 'none';
+    if (viewExp)  viewExp.style.display  = 'none';
     viewLive.style.display = '';
     if (necesitaCarga(liveIframe)) liveIframe.src = '/live';
   }
@@ -1133,9 +1223,32 @@ ${table.outerHTML}
     chatArea2.style.display = 'none';
     inputArea.style.display = 'none';
     if (viewLive) viewLive.style.display = 'none';
+    if (viewExp)  viewExp.style.display  = 'none';
     viewPdfs.style.display = '';
     if (necesitaCarga(pdfsIframe)) pdfsIframe.src = '/pdfs';
   }
+
+  // Los links a proposiciones que el modelo escribe en sus respuestas
+  // (workflow_proyectos.md los arma como `[numero](enlace)`) apuntan al portal
+  // del Congreso. Interceptarlos acá los abre en la ficha interna; si el link
+  // es otra cosa, se deja pasar y sigue yendo al navegador como antes.
+  //
+  // El número sale del TEXTO del link, no de la URL: la URL del portal lleva
+  // el `pleyNum` interno de SPLEY, mientras que /expediente necesita el número
+  // público (00088-2026-2031-CD), que es justo lo que el link muestra.
+  const RE_NUM_PROYECTO = /^\d{1,6}[-/]\d{4}(?:-\d{4})?-[A-Z]{1,3}$/i;
+
+  document.addEventListener('click', (e) => {
+    const a = e.target.closest('a[href]');
+    if (!a || !a.href.includes('spley-portal')) return;
+
+    const numero = (a.textContent || '').trim();
+    if (!RE_NUM_PROYECTO.test(numero)) return;   // ej. "Ver en SPLEY" → al navegador
+
+    e.preventDefault();
+    e.stopPropagation();
+    switchToExpediente(numero);
+  });
 
   navChat.addEventListener('click', switchToChat);
   if (navLive) navLive.addEventListener('click', switchToLive);
@@ -1143,6 +1256,7 @@ ${table.outerHTML}
 
   window.addEventListener('message', (e) => {
     if (e.data === 'close-live') { switchToChat(); return; }
+    if (e.data === 'close-expediente') { switchToChat(); return; }
     if (e.data && e.data.type === 'load-pdf') {
       switchToChat();
       loadPdfFromUrl(e.data.url, e.data.titulo);

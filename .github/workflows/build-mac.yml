@@ -32,6 +32,49 @@ jobs:
       - name: Build Python server
         run: pyinstaller server.spec
 
+      # Sin esto el .app abre pero no sirve para nada: config.py lee las keys
+      # de un .env y ese archivo está en .gitignore, así que nunca viajaba
+      # dentro del bundle. LLM_API_KEY quedaba en "" y el chat cortaba en seco
+      # con "Falta la API key para el proveedor activo".
+      #
+      # El archivo va al lado del ejecutable de PyInstaller porque
+      # `extraResources` copia dist/server entero a Resources/server, que es
+      # exactamente donde config.ENV_FILE lo busca cuando corre congelado.
+      - name: Inyectar credenciales en el bundle
+        env:
+          LLM_PROVIDER:     ${{ vars.LLM_PROVIDER || 'gemini' }}
+          GROQ_API_KEY:     ${{ secrets.GROQ_API_KEY }}
+          GEMINI_API_KEY:   ${{ secrets.GEMINI_API_KEY }}
+          CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+          OPENAI_API_KEY:   ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          # Un secret vacío escribe la línea igual (VAR=), que es inofensivo:
+          # os.getenv devuelve "" y el proveedor queda como si no estuviera.
+          {
+            echo "LLM_PROVIDER=$LLM_PROVIDER"
+            echo "GROQ_API_KEY=$GROQ_API_KEY"
+            echo "GEMINI_API_KEY=$GEMINI_API_KEY"
+            echo "CEREBRAS_API_KEY=$CEREBRAS_API_KEY"
+            echo "OPENAI_API_KEY=$OPENAI_API_KEY"
+          } > dist/server/.env
+
+          # Falla temprano y ruidoso: sin la key del proveedor activo el DMG
+          # que sale no sirve, y es mejor enterarse acá que después de bajarlo.
+          case "$LLM_PROVIDER" in
+            groq)     key="$GROQ_API_KEY" ;;
+            gemini)   key="$GEMINI_API_KEY" ;;
+            cerebras) key="$CEREBRAS_API_KEY" ;;
+            openai)   key="$OPENAI_API_KEY" ;;
+            *) echo "::error::LLM_PROVIDER '$LLM_PROVIDER' no es válido"; exit 1 ;;
+          esac
+          if [ -z "$key" ]; then
+            echo "::error::Falta el secret de la key para LLM_PROVIDER=$LLM_PROVIDER"
+            exit 1
+          fi
+          if [ -z "$GROQ_API_KEY" ]; then
+            echo "::warning::Sin GROQ_API_KEY la transcripción de sesiones no va a funcionar"
+          fi
+
       - name: Set up Node.js 20
         uses: actions/setup-node@v4
         with:

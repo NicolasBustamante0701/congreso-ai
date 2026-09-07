@@ -156,7 +156,7 @@ def markdown_to_docx(md: str) -> bytes:
     doc.add_paragraph()
     _add_banner(
         doc,
-        f"Generado por Solón — Sistema de Monitoreo Parlamentario · "
+        f"Generado por Diana — Sistema de Monitoreo Parlamentario · "
         f"{datetime.now().strftime('%d/%m/%Y')}",
     )
 

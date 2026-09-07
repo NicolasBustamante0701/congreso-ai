@@ -6,14 +6,13 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 
 from config import GROQ_API_KEY, LLM_API_KEY, MAIN_MODEL, logger, static_file
 from scraper import fetch_videos_youtube, get_yt_captions, transcribe_with_whisper
-from services import groq as groq_service
-from services import sse
+from services import llm, sse
 from services.prompt_registry import build_sesion_prompt
 
 router = APIRouter()
 
 SESION_SYSTEM = (
-    "Eres Solón, experto en análisis parlamentario del Congreso del Perú. "
+    "Eres Diana, experta en análisis parlamentario del Congreso del Perú. "
     "Analizas transcripts de sesiones y los conviertes en resúmenes ejecutivos con tablas."
 )
 
@@ -38,20 +37,20 @@ async def sesiones_videos():
 
 async def _stream_resumen(titulo: str, texto: str):
     """Genera el resumen de un transcript y lo emite como SSE."""
-    client = groq_service.get_client()
+    client = llm.get_client()
     messages = [
         {"role": "system", "content": SESION_SYSTEM},
         {"role": "user", "content": build_sesion_prompt(titulo, texto)},
     ]
     try:
-        async for delta in groq_service.stream_deltas(
+        async for delta in llm.stream_deltas(
             client, messages, model=MAIN_MODEL, max_tokens=3000, temperature=0.3
         ):
             yield sse.text(delta)
         yield sse.DONE
     except Exception as e:
         logger.error("Resumen de sesión falló: %s", e)
-        yield sse.error(groq_service.friendly_error(e))
+        yield sse.error(llm.friendly_error(e))
 
 
 @router.post("/sesiones/resumir")

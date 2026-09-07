@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="es" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Expediente — Diana</title>
+<link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="/static/expediente.css">
+<script>
+  // El tema se lee antes de pintar para no mostrar un flash blanco al abrir
+  // en modo oscuro. app.js además manda un postMessage cuando se cambia.
+  try {
+    document.documentElement.dataset.theme =
+      localStorage.getItem('congreso_dark') === '1' ? 'dark' : 'light';
+  } catch (e) { /* localStorage bloqueado: queda en claro */ }
+</script>
+</head>
+<body>
+
+<div class="exp-shell">
+
+  <!-- ── Columna izquierda: la ficha ───────────────────── -->
+  <section class="exp-ficha" id="exp-ficha">
+    <header class="exp-topbar">
+      <button class="exp-back" id="exp-back" title="Volver al chat">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M10 3.5L5.5 8l4.5 4.5"/>
+        </svg>
+        Volver
+      </button>
+      <span class="exp-topbar-num" id="exp-topbar-num"></span>
+      <a class="exp-portal" id="exp-portal" href="#" title="Abrir la ficha en el portal del Congreso">
+        Ver en el portal
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M6.5 3.5H3.5v9h9v-3"/><path d="M9.5 2.5h4v4"/><path d="M13.5 2.5l-6 6"/>
+        </svg>
+      </a>
+    </header>
+
+    <div class="exp-scroll" id="exp-scroll">
+      <div class="exp-loading" id="exp-loading">
+        <div class="exp-spinner"></div>
+        <p>Consultando el expediente en SPLEY…</p>
+      </div>
+      <div id="exp-body" style="display:none"></div>
+    </div>
+  </section>
+
+  <!-- ── Columna derecha: el chat del proyecto ─────────── -->
+  <aside class="exp-chat">
+    <header class="exp-chat-head">
+      <div class="exp-chat-title">
+        <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M15.5 8.6a6.2 6.2 0 0 1-6.7 6.2c-.7 0-1.4-.1-2-.3L3 15.5l1.1-3.6a6.2 6.2 0 1 1 11.4-3.3z"/>
+        </svg>
+        Preguntá sobre este proyecto
+      </div>
+      <p class="exp-chat-sub" id="exp-chat-sub">Diana ya tiene la ficha a la vista.</p>
+    </header>
+
+    <div class="exp-chat-log" id="exp-chat-log">
+      <div class="exp-chips" id="exp-chips"></div>
+    </div>
+
+    <div class="exp-chat-input">
+      <textarea id="exp-input" rows="1" placeholder="Escribí tu pregunta…"></textarea>
+      <button id="exp-send" title="Enviar">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 10h13M11 5l5 5-5 5"/>
+        </svg>
+      </button>
+    </div>
+  </aside>
+
+</div>
+
+<script src="/static/marked.min.js"></script>
+<script src="/static/purify.min.js"></script>
+<script src="/static/expediente.js"></script>
+</body>
+</html>

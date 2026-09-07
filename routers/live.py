@@ -6,8 +6,7 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 
 from config import GROQ_API_KEY, MAIN_MODEL, logger, static_file
 from live_transcriber import stream_transcription
-from services import groq as groq_service
-from services import sse
+from services import llm, sse
 from services.prompt_registry import LIVE_ANALYSIS_PROMPT
 
 router = APIRouter()
@@ -138,15 +137,15 @@ async def live_analyze(request: Request):
             {"role": "user", "content": f'Sesión: "{titulo}"\n\nTramo nuevo de la transcripción:\n{excerpt}'},
         ]
         try:
-            async for delta in groq_service.stream_deltas(
-                groq_service.get_client(), messages,
+            async for delta in llm.stream_deltas(
+                llm.get_client(), messages,
                 model=MAIN_MODEL, max_tokens=400, temperature=0.3,
             ):
                 yield sse.text(delta)
             yield sse.DONE
         except Exception as e:
             logger.error("live_analyze falló: %s", e)
-            yield sse.error(groq_service.friendly_error(e))
+            yield sse.error(llm.friendly_error(e))
 
     return StreamingResponse(generate(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache"})

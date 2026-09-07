@@ -3,18 +3,17 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Congreso IA</title>
+  <title>Diana</title>
   <meta name="theme-color" content="#ffffff">
   <link rel="manifest" href="/static/manifest.json">
   <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon.ico">
   <link rel="icon" type="image/png" sizes="192x192" href="/static/icon-192.png">
-  <link rel="stylesheet" href="/static/style.css?v=10">
+  <link rel="stylesheet" href="/static/style.css?v=12">
   <script src="/static/marked.min.js"></script>
   <script src="/static/purify.min.js"></script>
 </head>
 <body>
 
-<canvas id="bg-canvas"></canvas>
 
 <button id="sidebar-open" title="Abrir barra lateral">
   <svg viewBox="0 0 32 32" fill="none">
@@ -42,7 +41,7 @@
           </svg>
         </button>
         <div class="sidebar-logo-text">
-          <span class="sidebar-logo-title">Congreso AI</span>
+          <span class="sidebar-logo-title">DIANA</span>
           <span class="sidebar-logo-subtitle">Asistente Legislativo</span>
         </div>
       </div>
@@ -125,26 +124,29 @@
   <!-- Main -->
   <main class="main">
 
-    <button id="settings-btn" title="Personalizar color de acento">
-      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="10" cy="10" r="2.4"/>
-        <path d="M10 2.5v2M10 15.5v2M17.5 10h-2M4.5 10h-2M15.1 4.9l-1.4 1.4M6.3 13.7l-1.4 1.4M15.1 15.1l-1.4-1.4M6.3 6.3L4.9 4.9"/>
+    <button id="theme-btn" title="Cambiar entre modo claro y oscuro">
+      <svg id="theme-icon-sun" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+        <circle cx="10" cy="10" r="3.6"/>
+        <path d="M10 1.6v2.2M10 16.2v2.2M18.4 10h-2.2M3.8 10H1.6M15.94 4.06l-1.56 1.56M5.62 14.38l-1.56 1.56M15.94 15.94l-1.56-1.56M5.62 5.62L4.06 4.06"/>
+      </svg>
+      <svg id="theme-icon-moon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="display:none">
+        <path d="M17.5 12.5A7.5 7.5 0 0 1 7.5 2.5a7.5 7.5 0 1 0 10 10z"/>
       </svg>
     </button>
     <div id="accent-popover" class="accent-popover" style="display:none">
       <div class="accent-popover-title">Color de acento</div>
       <div class="accent-swatches" id="accent-swatches">
+        <button class="accent-swatch" data-color="#111111" style="background:#111111"></button>
         <button class="accent-swatch" data-color="#e53e3e" style="background:#e53e3e"></button>
         <button class="accent-swatch" data-color="#2563eb" style="background:#2563eb"></button>
         <button class="accent-swatch" data-color="#16a34a" style="background:#16a34a"></button>
         <button class="accent-swatch" data-color="#9333ea" style="background:#9333ea"></button>
         <button class="accent-swatch" data-color="#ea580c" style="background:#ea580c"></button>
         <button class="accent-swatch" data-color="#0d9488" style="background:#0d9488"></button>
-        <button class="accent-swatch" data-color="#111111" style="background:#111111"></button>
       </div>
       <label class="accent-custom">
         Personalizado
-        <input type="color" id="accent-custom-input" value="#e53e3e">
+        <input type="color" id="accent-custom-input" value="#111111">
       </label>
 
       <div class="accent-popover-divider"></div>
@@ -152,19 +154,19 @@
       <div class="metric-color-pickers">
         <label class="metric-color-row">
           <span>Próxima sesión</span>
-          <input type="color" id="metric-color-sesion" value="#f4425a">
+          <input type="color" id="metric-color-sesion" value="#111111">
         </label>
         <label class="metric-color-row">
           <span>Proyectos</span>
-          <input type="color" id="metric-color-proyectos" value="#8b6ef5">
+          <input type="color" id="metric-color-proyectos" value="#111111">
         </label>
         <label class="metric-color-row">
           <span>Comisiones</span>
-          <input type="color" id="metric-color-comisiones" value="#6366f1">
+          <input type="color" id="metric-color-comisiones" value="#111111">
         </label>
         <label class="metric-color-row">
           <span>Citaciones</span>
-          <input type="color" id="metric-color-citaciones" value="#f4425a">
+          <input type="color" id="metric-color-citaciones" value="#111111">
         </label>
       </div>
     </div>
@@ -189,6 +191,7 @@
             <path d="M11 2v5h5M8 13v-4M8 9l2 2 2-2"/>
           </svg>
         </label>
+        <span class="input-divider" aria-hidden="true"></span>
         <button id="congreso-pdf-btn" title="PDFs del Congreso">
           <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
             <rect x="3" y="20" width="14" height="2" rx=".5"/>
@@ -200,8 +203,8 @@
         </button>
         <textarea id="msg-input" placeholder="Pregunta sobre proyectos de ley, comisiones, sesiones…" rows="1"></textarea>
         <button id="send-btn" disabled>
-          <svg viewBox="0 0 20 20" fill="currentColor">
-            <path d="M10 2l8 16-8-4-8 4z"/>
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M10 16V4M4.8 9.2L10 4l5.2 5.2"/>
           </svg>
         </button>
       </div>
@@ -296,6 +299,11 @@
       <iframe id="pdfs-iframe" src="about:blank" style="width:100%;height:100%;border:none;"></iframe>
     </div>
 
+    <!-- Vista Expediente — ficha de una proposición + chat del proyecto -->
+    <div id="view-expediente" style="display:none;position:absolute;inset:0;z-index:10;background:#f7f8fa;">
+      <iframe id="expediente-iframe" src="about:blank" style="width:100%;height:100%;border:none;"></iframe>
+    </div>
+
   </main>
 </div>
 
@@ -303,7 +311,7 @@
 <div id="resumen-modal" class="modal-overlay" style="display:none">
   <div class="modal-box modal-box--wide">
     <div class="modal-title">¿En qué enfocamos el resumen?</div>
-    <div class="modal-subtitle">Solón ajustará el análisis según el sector de tu cliente</div>
+    <div class="modal-subtitle">Diana ajustará el análisis según el sector de tu cliente</div>
     <div class="modal-sectors">
       <button class="sector-btn" data-sector="general">
         <span class="sector-icon">🏛️</span>
@@ -358,71 +366,7 @@
   </symbol>
 </svg>
 
-<script src="/static/app.js?v=17"></script>
-<script>
-(function() {
-  const canvas = document.getElementById('bg-canvas');
-  const ctx = canvas.getContext('2d');
-  let t = 0;
-  const dark = () => document.documentElement.getAttribute('data-theme') === 'dark';
-
-  function resize() {
-    canvas.width  = window.innerWidth;
-    canvas.height = window.innerHeight;
-  }
-  resize();
-  window.addEventListener('resize', resize);
-
-  function draw() {
-    const w = canvas.width, h = canvas.height;
-    ctx.clearRect(0, 0, w, h);
-
-    const isDark    = dark();
-    // El glow de fondo usa la paleta fija multi-color (no el acento
-    // configurable — ver nuevaimagenfront.png): rosa arriba, índigo abajo,
-    // el mismo degradado que ya tiene el borde del buscador. Fondo base más
-    // frío/índigo en vez de negro cálido, para que combine.
-    const roseRgb   = '244,66,90';
-    const indigoRgb = '99,102,241';
-    const bgColor   = isDark ? '#0a0a12' : '#ffffff';
-
-    // fondo base
-    ctx.fillStyle = bgColor;
-    ctx.fillRect(0, 0, w, h);
-
-    // pulso suave
-    const pulse = 0.45 + 0.06 * Math.sin(t * 0.6);
-    const size  = Math.max(w, h) * 0.9;
-
-    // El sidebar tiene su propio fondo casi opaco encima del canvas, así
-    // que un glow centrado en x=0 se queda enterrado ahí y en el contenido
-    // principal solo se ve la cola, ya débil de por sí — apenas se nota
-    // (reportado en vivo). Se corre el origen al borde del sidebar
-    // (--sidebar-w) para que el punto más brillante caiga DENTRO del
-    // contenido visible, no debajo de una capa opaca.
-    const sidebarW = parseInt(getComputedStyle(document.documentElement)
-      .getPropertyValue('--sidebar-w')) || 260;
-    const corners = [
-      { x: sidebarW, y: 0, rgb: roseRgb },
-      { x: sidebarW, y: h, rgb: indigoRgb },
-    ];
-    const baseOp = isDark ? 0.5 : 0.16;
-    const midOp  = isDark ? 0.22 : 0.06;
-    corners.forEach(({ x, y, rgb }) => {
-      const g = ctx.createRadialGradient(x, y, 0, x, y, size * pulse);
-      g.addColorStop(0,    `rgba(${rgb}, ${baseOp})`);
-      g.addColorStop(0.35, `rgba(${rgb}, ${midOp})`);
-      g.addColorStop(1,    `rgba(${rgb}, 0)`);
-      ctx.fillStyle = g;
-      ctx.fillRect(0, 0, w, h);
-    });
-
-    t += 0.012;
-    requestAnimationFrame(draw);
-  }
-  draw();
-})();
-</script>
+<script src="/static/app.js?v=19"></script>
 <script>if('serviceWorker' in navigator) navigator.serviceWorker.register('/static/sw.js');</script>
 </body>
 </html>

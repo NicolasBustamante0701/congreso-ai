@@ -1,7 +1,8 @@
 """
 Catálogo de herramientas que el modelo puede invocar en la Fase 1 del chat.
 
-TOOLS        — schemas en formato function-calling de OpenAI/Groq.
+TOOLS        — schemas en formato function-calling de OpenAI (el que
+               aceptan por igual Gemini, Groq y OpenAI).
 TOOL_MAP     — nombre de herramienta → coroutine que la ejecuta.
 STATUS_LABELS— texto de progreso que ve el usuario mientras corre cada una.
 """
@@ -57,6 +58,20 @@ TOOLS = [
                     "dias": {
                         "type": "integer",
                         "description": "Filtrar proyectos presentados en los últimos N días calendario (ej: 15 para los últimos 15 días)"
+                    },
+                    # Sin esto el modelo no tenía forma de pedir más resultados:
+                    # el prompt le ordenaba "volvé a llamar con limit >=
+                    # total_disponible" cuando la respuesta venía truncada, pero
+                    # `limit` no existía en el esquema. No podía obedecer, así
+                    # que terminaba pidiéndole permiso al usuario para reintentar
+                    # en vez de traer el listado completo.
+                    "limit": {
+                        "type": "integer",
+                        "description": (
+                            "Cuántos proyectos devolver. Default 20, o 100 si se usa `dias`. "
+                            "Si una respuesta previa vino con truncado=true, volvé a llamar "
+                            "con limit >= total_disponible para tener el listado entero."
+                        )
                     },
                 }
             }

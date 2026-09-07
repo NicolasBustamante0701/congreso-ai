@@ -1,11 +1,16 @@
 """
-Capa sobre el cliente LLM: cliente, clasificación de errores y streaming con
-reintento sobre rate limit.
+Capa sobre el cliente de chat: cliente, clasificación de errores y streaming
+con reintento sobre rate limit.
 
-Habla siempre por el SDK de `openai` — mismo cliente sin importar si el
-proveedor activo (config.LLM_PROVIDER) es Groq, Gemini o el propio OpenAI:
-los tres exponen un endpoint compatible con el formato de chat completions de
-OpenAI, así que solo cambia la URL base y la key. Ver config.py.
+Es agnóstica del proveedor: habla siempre por el SDK de `openai` contra el
+endpoint que fije config.LLM_PROVIDER — hoy Gemini, y también sirven Groq,
+Cerebras y OpenAI, que exponen el mismo formato de chat completions. Solo
+cambian la URL base, la key y los modelos (ver config.py).
+
+OJO, no confundir con Groq-el-de-Whisper: la transcripción de audio
+(live_transcriber.py y scraper.py) habla con Groq directo, con su propio SDK y
+su propia GROQ_API_KEY, y no pasa por acá. Este módulo se llamaba `groq.py`
+justamente por esa confusión, de cuando Groq era además el proveedor de chat.
 
 Los límites de cada proveedor son distintos (Groq: tokens por minuto; Gemini:
 requests por día en el tier gratis) — parse_retry_seconds/is_rate_limit
@@ -31,9 +36,51 @@ MAX_ATTEMPTS = 3
 _EXTRA_PARAMS = {"reasoning_effort": "low"} if LLM_PROVIDER == "gemini" else {}
 
 
+# Un solo cliente para todo el proceso. Antes se construía uno nuevo por turno
+# (ChatOrchestrator.__init__), y cada uno traía su propio pool de conexiones:
+# el pool que se calienta en un turno se tiraba junto con el cliente, así que
+# no había nada que reusar y precalentar era imposible. Con uno solo, la
+# conexión abierta en el arranque sirve para todos los turnos siguientes.
+_client_default: OpenAI | None = None
+
+
 def get_client(api_key: str | None = None) -> OpenAI:
-    """Cliente del proveedor LLM activo. Sin argumento usa la key del entorno."""
-    return OpenAI(api_key=api_key or LLM_API_KEY, base_url=LLM_BASE_URL)
+    """
+    Cliente del proveedor LLM activo. Sin argumento devuelve el compartido.
+
+    Con `api_key` explícita construye uno aparte — no se cachea, porque la key
+    es distinta de la del entorno.
+    """
+    if api_key:
+        return OpenAI(api_key=api_key, base_url=LLM_BASE_URL)
+
+    global _client_default
+    if _client_default is None:
+        _client_default = OpenAI(api_key=LLM_API_KEY, base_url=LLM_BASE_URL)
+    return _client_default
+
+
+def warmup() -> None:
+    """
+    Abre la conexión con el proveedor antes de que el usuario escriba.
+
+    La primera request de un proceso paga DNS + TCP + TLS: medido contra
+    Gemini, entre 1 y 3.5 segundos que se le cargaban enteros al primer
+    mensaje del usuario. Haciéndola en el arranque, ese costo se paga mientras
+    la ventana todavía está cargando y el primer mensaje sale ~1s más rápido.
+
+    Se usa models.list() a propósito: abre la misma conexión que después
+    reusan los pedidos de chat, pero no consume la cuota de generación (el
+    tier gratis de Gemini son 15 requests por minuto y hay que cuidarlos).
+
+    Falla en silencio: sin red, sin key o con el endpoint caído, la app tiene
+    que arrancar igual — esto es una optimización, no un requisito.
+    """
+    try:
+        get_client().models.list()
+        logger.info("Conexión con %s precalentada", _PROVIDER_LABEL)
+    except Exception as e:
+        logger.debug("Warmup de %s falló (no es grave): %s", _PROVIDER_LABEL, e)
 
 
 # ── Clasificación de errores ─────────────────────────────────────────────────

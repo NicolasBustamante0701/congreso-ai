@@ -15,36 +15,44 @@
   --font:      'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --spring:    cubic-bezier(0.34, 1.56, 0.64, 1);
   --smooth:    cubic-bezier(0.16, 1, 0.3, 1);
-  /* Color de acento — configurable desde el engranaje de la app (ver app.js applyAccent) */
-  --accent:       #e53e3e;
-  --accent-rgb:   229,62,62;
-  --accent-hover: #c53030;
+  /* Color de acento — configurable desde el menú de perfil → "Color de
+     acento" (ver app.js applyAccent). El diseño nuevo es monocromo, así que
+     el valor de fábrica es el mismo negro del texto: quien quiera color lo
+     sigue teniendo a un clic, pero la app no arranca con él. */
+  --accent:       #111111;
+  --accent-rgb:   17,17,17;
+  --accent-hover: #000000;
   /* Variante segura para texto/ícono/glow sobre fondos oscuros — igual al
      acento salvo que este sea muy oscuro (ver applyAccent en app.js). */
-  --accent-fg:     #e53e3e;
-  --accent-fg-rgb: 229,62,62;
+  --accent-fg:     #111111;
+  --accent-fg-rgb: 17,17,17;
 
-  /* Paleta fija multi-color (ver nuevaimagenfront.png) — a diferencia de
-     --accent, esta NO es configurable desde el engranaje: cada tarjeta de
-     métrica, el nav activo, el borde del buscador y el botón de enviar
-     usan un color propio fijo, por diseño. */
-  --c-rose:   #f4425a;
-  --c-violet: #8b6ef5;
-  --c-indigo: #6366f1;
-  --c-nav-active: #1e2470;
+  /* Antes esto era una paleta fija rosa/violeta/índigo. El rediseño la
+     reemplaza por grises: el borde del buscador, el botón de enviar y el
+     ítem activo del nav dejaron de tener color propio y se leen por
+     contraste y peso, no por tinte. Se conservan los nombres para no
+     romper las reglas que ya los usan. */
+  --c-rose:   #111111;
+  --c-violet: #d0d0d0;
+  --c-indigo: #8a8a8a;
+  --c-nav-active: var(--active-bg);
 
-  /* Color de cada tarjeta de métrica — SÍ configurable, uno por círculo,
-     independiente entre sí (ver applyMetricColor en app.js). Arrancan
-     igual a la paleta fija de arriba, pero cada uno se puede recolorear
-     por separado desde el engranaje. */
-  --c-metric-sesion:     #f4425a;
-  --c-metric-proyectos:  #8b6ef5;
-  --c-metric-comisiones: #6366f1;
-  --c-metric-citaciones: #f4425a;
+  /* --c-metric-* ya NO se declara acá a propósito: si tuviera un valor de
+     fábrica, ese valor ganaría siempre y el fallback por tema de las reglas
+     .metric-card[data-metric=…] nunca entraría. app.js la define inline solo
+     cuando el usuario elige un color desde "Color de acento". */
 }
 
 /* ── Modo oscuro ─────────────────────────────────── */
 [data-theme="dark"] {
+  --accent:        #e8e8e8;
+  --accent-rgb:    232,232,232;
+  --accent-hover:  #ffffff;
+  --accent-fg:     #e8e8e8;
+  --accent-fg-rgb: 232,232,232;
+  --c-violet:  #3a3a3a;
+  --c-indigo:  #6a6a6a;
+  --c-rose:    #e8e8e8;
   --white:     #111111;
   --off:       #1a1a1a;
   --border:    #2e2e2e;
@@ -69,14 +77,6 @@ html, body {
   overflow: hidden;
 }
 
-/* ── Canvas ──────────────────────────────────────── */
-#bg-canvas {
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: 0;
-}
-
 /* ── Layout ──────────────────────────────────────── */
 .layout {
   position: relative;
@@ -89,9 +89,7 @@ html, body {
 .sidebar {
   width: var(--sidebar-w);
   min-width: var(--sidebar-w);
-  background: rgba(255,255,255,0.72);
-  backdrop-filter: blur(2px);
-  -webkit-backdrop-filter: blur(2px);
+  background: var(--white);
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
@@ -127,7 +125,7 @@ html, body {
   border: none;
   cursor: pointer;
   padding: 4px;
-  color: var(--accent);
+  color: var(--black);
   display: flex;
   align-items: center;
   border-radius: 8px;
@@ -139,7 +137,7 @@ html, body {
 .logo-svg {
   width: 24px;
   height: 24px;
-  color: var(--accent);
+  color: var(--black);
   flex-shrink: 0;
 }
 
@@ -151,10 +149,10 @@ html, body {
   white-space: nowrap;
 }
 .sidebar-logo-title {
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 800;
   color: var(--black);
-  letter-spacing: -0.2px;
+  letter-spacing: 0.02em;
 }
 .sidebar-logo-subtitle {
   font-size: 10px;
@@ -194,7 +192,7 @@ html, body {
   padding: 10px 14px;
   border-radius: 11px;
   border: 1.5px solid var(--border);
-  background: var(--off);
+  background: var(--white);
   color: var(--text);
   font-family: var(--font);
   font-size: 13.5px;
@@ -204,10 +202,10 @@ html, body {
 }
 #new-chat-wide-btn svg { width: 15px; height: 15px; flex-shrink: 0; }
 #new-chat-wide-btn:hover {
-  border-color: var(--c-violet);
-  background: rgba(139,110,245, 0.08);
+  border-color: var(--black);
+  background: var(--off);
   transform: translateY(-1px);
-  box-shadow: 0 6px 16px rgba(139,110,245, .16);
+  box-shadow: 0 4px 12px rgba(0,0,0,.08);
 }
 #new-chat-wide-btn:active { transform: translateY(0); }
 .sidebar.collapsed #new-chat-wide-btn { display: none; }
@@ -246,6 +244,7 @@ html, body {
   font-size: 10px;
   font-weight: 800;
   color: var(--dim);
+  text-transform: uppercase;
   padding: 10px 6px 4px;
   letter-spacing: 1.2px;
   text-transform: uppercase;
@@ -308,7 +307,7 @@ html, body {
   color: var(--accent);
 }
 .chat-item.active .chat-item-del { color: rgba(var(--accent-rgb), 0.55); }
-.chat-item.active .chat-item-del:hover { color: #fff; background: var(--accent); }
+.chat-item.active .chat-item-del:hover { color: var(--white); background: var(--accent); }
 
 /* click ripple on chat-item */
 .chat-item.clicking { animation: itemPop 0.25s var(--spring); }
@@ -381,7 +380,7 @@ html, body {
   height: 34px;
   border-radius: 50%;
   background: var(--accent);
-  color: #fff;
+  color: var(--white);
   font-size: 11px;
   font-weight: 800;
   display: flex;
@@ -473,7 +472,7 @@ html, body {
   position: relative;
 }
 .main.chat-mode {
-  background: rgba(255,255,255,0.8);
+  background: var(--white);
 }
 
 /* Welcome state: center input+welcome block vertically */
@@ -584,19 +583,19 @@ html, body {
 }
 .metric-card-icon svg { width: 14px; height: 14px; }
 
-/* Color configurable por tarjeta — cada una tiene su propia variable
-   (--c-metric-*, ver :root) que se puede cambiar desde el engranaje
-   (applyMetricColor en app.js), independiente entre sí y del acento
-   general. Más específico que las reglas de [data-theme="dark"] de más
-   abajo, así que gana en los dos temas sin necesitar una variante aparte. */
-.metric-card[data-metric="sesion"]     .metric-card-icon { background: color-mix(in srgb, var(--c-metric-sesion) 14%, transparent);     color: var(--c-metric-sesion); }
-.metric-card[data-metric="proyectos"]  .metric-card-icon { background: color-mix(in srgb, var(--c-metric-proyectos) 14%, transparent);  color: var(--c-metric-proyectos); }
-.metric-card[data-metric="comisiones"] .metric-card-icon { background: color-mix(in srgb, var(--c-metric-comisiones) 14%, transparent); color: var(--c-metric-comisiones); }
-.metric-card[data-metric="citaciones"] .metric-card-icon { background: color-mix(in srgb, var(--c-metric-citaciones) 14%, transparent); color: var(--c-metric-citaciones); }
-.metric-card[data-metric="sesion"]     .metric-card-ver  { color: var(--c-metric-sesion); }
-.metric-card[data-metric="proyectos"]  .metric-card-ver  { color: var(--c-metric-proyectos); }
-.metric-card[data-metric="comisiones"] .metric-card-ver  { color: var(--c-metric-comisiones); }
-.metric-card[data-metric="citaciones"] .metric-card-ver  { color: var(--c-metric-citaciones); }
+/* Color configurable por tarjeta. --c-metric-* solo existe si el usuario
+   eligió un color a mano (app.js la fija inline en ese caso); mientras no
+   lo haga, el fallback es --accent, que se invierte con el tema. Antes acá
+   había un color fijo por tarjeta: con la paleta monocroma eso dejaba el
+   ícono negro sobre la tarjeta negra del modo oscuro. */
+.metric-card[data-metric="sesion"]     .metric-card-icon { background: color-mix(in srgb, var(--c-metric-sesion, var(--accent)) 14%, transparent);     color: var(--c-metric-sesion, var(--accent)); }
+.metric-card[data-metric="proyectos"]  .metric-card-icon { background: color-mix(in srgb, var(--c-metric-proyectos, var(--accent)) 14%, transparent);  color: var(--c-metric-proyectos, var(--accent)); }
+.metric-card[data-metric="comisiones"] .metric-card-icon { background: color-mix(in srgb, var(--c-metric-comisiones, var(--accent)) 14%, transparent); color: var(--c-metric-comisiones, var(--accent)); }
+.metric-card[data-metric="citaciones"] .metric-card-icon { background: color-mix(in srgb, var(--c-metric-citaciones, var(--accent)) 14%, transparent); color: var(--c-metric-citaciones, var(--accent)); }
+.metric-card[data-metric="sesion"]     .metric-card-ver  { color: var(--c-metric-sesion, var(--accent)); }
+.metric-card[data-metric="proyectos"]  .metric-card-ver  { color: var(--c-metric-proyectos, var(--accent)); }
+.metric-card[data-metric="comisiones"] .metric-card-ver  { color: var(--c-metric-comisiones, var(--accent)); }
+.metric-card[data-metric="citaciones"] .metric-card-ver  { color: var(--c-metric-citaciones, var(--accent)); }
 
 .metric-card-label {
   font-size: 10px;
@@ -640,7 +639,7 @@ html, body {
   cursor: pointer;
   align-self: flex-start;
 }
-.metric-card-ver svg { width: 8px; height: 8px; transition: transform 0.2s var(--spring); }
+.metric-card-ver svg { width: 11px; height: 11px; transition: transform 0.2s var(--spring); }
 .metric-card-ver:hover svg { transform: translateX(2px); }
 
 .metric-card.is-loading .metric-card-value {
@@ -881,7 +880,7 @@ html, body {
   text-transform: uppercase;
   margin-bottom: 10px;
 }
-.chips-label svg { width: 12px; height: 12px; color: var(--accent); }
+.chips-label svg { width: 12px; height: 12px; color: var(--mid); }
 
 .chips-grid { display: flex; gap: 8px; flex-wrap: wrap; }
 
@@ -936,29 +935,35 @@ html, body {
 .chip-card:active { transform: translateY(0); }
 
 /* Links en mensajes del asistente */
-.msg-content a { color: #00b4d8; font-weight: 700; text-decoration: underline; text-underline-offset: 3px; }
-.msg-content a:hover { color: #0096c7; opacity: 0.9; }
+.msg-content a { color: var(--black); font-weight: 800; text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1.5px; }
+.msg-content a:hover { opacity: 0.65; }
 
 /* Input wrap */
 .input-wrap {
   display: flex;
   align-items: flex-end;
   gap: 10px;
-  border: 1.5px solid transparent;
+  /* El degradado rosa→violeta→índigo se reemplazó por un borde gris fino:
+     en el diseño nuevo el buscador se distingue por su caja, no por color. */
+  border: 1.5px solid var(--border);
   border-radius: var(--radius);
   padding: 10px 12px;
-  transition: box-shadow 0.2s;
-  box-shadow: 0 2px 10px rgba(139,110,245,.10);
-  /* Borde en degradado fijo rosa → violeta → índigo (ver
-     nuevaimagenfront.png) — no se puede lograr con border-color solo, así
-     que se rellena con dos fondos: uno sólido "adentro" del borde
-     (padding-box) y el degradado "afuera" (border-box). */
-  background:
-    linear-gradient(rgba(255,255,255,0.88), rgba(255,255,255,0.88)) padding-box,
-    linear-gradient(90deg, var(--c-rose), var(--c-violet), var(--c-indigo)) border-box;
+  background: var(--white);
+  transition: border-color 0.2s, box-shadow 0.2s;
+  box-shadow: 0 1px 3px rgba(0,0,0,.04);
 }
 .input-wrap:focus-within {
-  box-shadow: 0 0 0 3px rgba(139,110,245,.16), 0 2px 14px rgba(139,110,245,.14);
+  border-color: var(--black);
+  box-shadow: 0 2px 12px rgba(0,0,0,.08);
+}
+
+/* Separador entre los dos íconos de la izquierda del buscador. */
+.input-divider {
+  width: 1px;
+  height: 18px;
+  flex-shrink: 0;
+  align-self: center;
+  background: var(--border);
 }
 
 #pdf-btn, #congreso-pdf-btn {
@@ -1065,14 +1070,14 @@ textarea {
   max-height: 160px;
   line-height: 1.5;
 }
-textarea::placeholder { color: rgba(139,110,245, 0.55); font-weight: 600; }
+textarea::placeholder { color: var(--dim); font-weight: 600; }
 
-/* Color fijo (no --accent) — ver --c-rose arriba. */
+/* Neutro: cuadrado gris claro con la flecha oscura (ver captura). */
 #send-btn {
-  background: var(--c-rose);
-  border: none;
+  background: var(--off);
+  border: 1.5px solid var(--border);
   border-radius: 9px;
-  color: #fff;
+  color: var(--black);
   cursor: pointer;
   padding: 9px 10px;
   display: flex;
@@ -1084,7 +1089,12 @@ textarea::placeholder { color: rgba(139,110,245, 0.55); font-weight: 600; }
   overflow: hidden;
 }
 #send-btn svg { width: 16px; height: 16px; transition: transform 0.25s var(--spring); }
-#send-btn:not(:disabled):hover { transform: scale(1.1); box-shadow: 0 6px 16px rgba(244,66,90,.4); }
+#send-btn:not(:disabled):hover {
+  background: var(--black);
+  border-color: var(--black);
+  color: var(--white);
+  transform: scale(1.06);
+}
 #send-btn:not(:disabled):hover svg { transform: translateY(-2px); }
 #send-btn:not(:disabled):active { transform: scale(0.93); }
 #send-btn:disabled { opacity: 0.28; cursor: not-allowed; }
@@ -1248,27 +1258,29 @@ textarea::placeholder { color: rgba(139,110,245, 0.55); font-weight: 600; }
   transition: color 0.15s, border-color 0.15s, background 0.15s;
 }
 .export-btn:hover { border-color: #111; color: var(--black); background: rgba(0,0,0,0.04); }
-.export-btn[data-type="pdf"] { color: #e53e3e; border-color: #e53e3e; }
-.export-btn[data-type="pdf"]:hover { color: #c53030; border-color: #c53030; background: rgba(229,62,62,0.08); }
-.export-btn[data-type="word"] { color: #3182ce; border-color: #3182ce; }
-.export-btn[data-type="word"]:hover { color: #2b6cb0; border-color: #2b6cb0; background: rgba(49,130,206,0.08); }
+.export-btn[data-type="pdf"] { color: var(--mid); border-color: var(--border); }
+.export-btn[data-type="pdf"]:hover { color: var(--black); border-color: var(--black); background: rgba(0,0,0,0.05); }
+.export-btn[data-type="word"] { color: var(--mid); border-color: var(--border); }
+.export-btn[data-type="word"]:hover { color: var(--black); border-color: var(--black); background: rgba(0,0,0,0.05); }
 
 /* ── Dark mode overrides (hardcoded colors) ──────── */
-[data-theme="dark"] .sidebar               { background: rgba(8,7,7,0.94); }
-[data-theme="dark"] .main.chat-mode        { background: rgba(10,9,9,0.62); }
-[data-theme="dark"] body                   { background: #0a0908; }
-[data-theme="dark"] .quick-actions-card    { background: rgba(20,17,17,0.7); border-color: #262121; }
-[data-theme="dark"] .chip-card             { background: rgba(24,20,20,0.7); border-color: #262121; }
-[data-theme="dark"] .metric-card           { background: rgba(24,20,20,0.7); border-color: #262121; }
-/* Mismo truco de doble fondo que la versión clara (ver .input-wrap base) —
-   solo cambia el relleno "adentro" del borde, el degradado sigue igual. */
+[data-theme="dark"] .sidebar               { background: #0c0c0c; }
+[data-theme="dark"] .main.chat-mode        { background: #0a0a0a; }
+[data-theme="dark"] body                   { background: #0a0a0a; }
+[data-theme="dark"] .quick-actions-card    { background: #141414; border-color: #262626; }
+[data-theme="dark"] .chip-card             { background: #161616; border-color: #262626; }
+[data-theme="dark"] .metric-card           { background: #161616; border-color: #262626; }
 [data-theme="dark"] .input-wrap {
-  background:
-    linear-gradient(rgba(18,16,16,0.95), rgba(18,16,16,0.95)) padding-box,
-    linear-gradient(90deg, var(--c-rose), var(--c-violet), var(--c-indigo)) border-box;
-  box-shadow: 0 0 0 1px rgba(139,110,245,.18), 0 8px 28px rgba(139,110,245,.16);
+  background: #161616;
+  border-color: #2e2e2e;
+  box-shadow: none;
 }
-[data-theme="dark"] .input-wrap:focus-within { box-shadow: 0 0 0 3px rgba(139,110,245,.24), 0 8px 32px rgba(139,110,245,.22); }
+[data-theme="dark"] .input-wrap:focus-within {
+  border-color: #6a6a6a;
+  box-shadow: 0 0 0 3px rgba(255,255,255,.06);
+}
+[data-theme="dark"] #send-btn { background: #1e1e1e; border-color: #333; color: #e8e8e8; }
+[data-theme="dark"] #send-btn:not(:disabled):hover { background: #e8e8e8; border-color: #e8e8e8; color: #111; }
 [data-theme="dark"] .message.user .msg-content {
   border-color: rgba(var(--accent-fg-rgb), .4);
   box-shadow: 0 4px 18px rgba(0,0,0,.3), 0 0 18px rgba(var(--accent-fg-rgb),.22);
@@ -1278,31 +1290,23 @@ textarea::placeholder { color: rgba(139,110,245, 0.55); font-weight: 600; }
   border-color: #262121;
   box-shadow: 0 2px 14px rgba(var(--accent-fg-rgb),.06);
 }
-[data-theme="dark"] textarea::placeholder  { color: rgba(139,110,245, 0.55); }
+[data-theme="dark"] textarea::placeholder  { color: var(--dim); }
 
-/* Blanco/neutro fijo — ya no depende de --accent-fg porque el botón dejó
-   de usar el acento configurable (ver base arriba). */
 [data-theme="dark"] #new-chat-wide-btn {
-  background: rgba(24,20,20,0.7);
-  border-color: #2e2626;
+  background: #161616;
+  border-color: #2e2e2e;
   color: var(--text);
-  box-shadow: 0 0 16px rgba(139,110,245,.18), 0 0 0 1px rgba(139,110,245,.14) inset;
-  animation: newChatGlow 2.6s ease-in-out infinite;
 }
 [data-theme="dark"] #new-chat-wide-btn:hover {
-  border-color: var(--c-violet);
-  background: rgba(139,110,245, 0.1);
-  box-shadow: 0 0 22px rgba(139,110,245,.3), 0 0 0 1px rgba(139,110,245,.26) inset;
+  border-color: #6a6a6a;
+  background: #1e1e1e;
+  box-shadow: none;
 }
-[data-theme="dark"] .chip-card-icon        { color: var(--accent-fg); }
+[data-theme="dark"] .chip-card-icon        { color: var(--accent-fg); background: rgba(255,255,255,0.08); }
 [data-theme="dark"] .chips-label svg       { color: var(--accent-fg); }
 /* .metric-card-icon/.metric-card-ver ya no dependen de --accent-fg: tienen
    color fijo por tarjeta con más especificidad (ver arriba), esto no aplica. */
 
-@keyframes newChatGlow {
-  0%, 100% { box-shadow: 0 0 14px rgba(139,110,245,.16), 0 0 0 1px rgba(139,110,245,.14) inset; }
-  50%      { box-shadow: 0 0 22px rgba(139,110,245,.3), 0 0 0 1px rgba(139,110,245,.22) inset; }
-}
 [data-theme="dark"] .modal-box             { background: #1a1a1a; }
 [data-theme="dark"] .modal-title           { color: #e8e8e8; }
 [data-theme="dark"] .modal-subtitle        { color: #777; }
@@ -1363,18 +1367,17 @@ textarea::placeholder { color: rgba(139,110,245, 0.55); font-weight: 600; }
 }
 .sidenav-btn svg { width: 16px; height: 16px; flex-shrink: 0; }
 .sidenav-btn:hover  { background: var(--hover); color: var(--black); }
-/* Color fijo (no --accent) — ver --c-nav-active arriba. */
+/* Pastilla gris clara con texto oscuro — ver captura del diseño. */
 .sidenav-btn.active {
   background: var(--c-nav-active);
-  color: #fff;
-  box-shadow: 0 4px 14px rgba(30,36,112,.4);
+  color: var(--black);
 }
 /* Más específico que .sidenav-btn:hover (arriba) y que la variante de modo
    oscuro — si no, al pasar el mouse el botón activo perdía el color y se
    iba a blanco/gris (bug real reportado en vivo). */
 .sidenav-btn.active:hover {
-  background: #262d85;
-  color: #fff;
+  background: var(--hover);
+  color: var(--black);
 }
 
 /* ── Vista de videos ─────────────────────────────── */
@@ -1560,8 +1563,10 @@ textarea::placeholder { color: rgba(139,110,245, 0.55); font-weight: 600; }
 }
 .video-yt-link:hover { opacity: 0.85; }
 
-/* ── Ajustes: botón de engranaje + selector de color de acento ──── */
-#settings-btn {
+/* ── Toggle de tema (esquina superior derecha) + popover de acento ──
+   El engranaje se sacó del header con el rediseño: su lugar lo ocupa este
+   botón, y el popover de color se abre desde el menú de perfil. */
+#theme-btn {
   position: absolute;
   top: 16px;
   right: 20px;
@@ -1578,8 +1583,8 @@ textarea::placeholder { color: rgba(139,110,245, 0.55); font-weight: 600; }
   cursor: pointer;
   transition: background 0.15s, color 0.15s, border-color 0.15s, transform 0.3s var(--spring);
 }
-#settings-btn:hover { background: var(--hover); color: var(--black); border-color: var(--border); transform: rotate(35deg); }
-#settings-btn svg { width: 17px; height: 17px; }
+#theme-btn:hover { background: var(--hover); color: var(--black); border-color: var(--border); }
+#theme-btn svg { width: 17px; height: 17px; }
 
 .accent-popover {
   position: absolute;
@@ -1669,4 +1674,23 @@ textarea::placeholder { color: rgba(139,110,245, 0.55); font-weight: 600; }
   cursor: pointer;
   padding: 0;
   flex-shrink: 0;
+}
+
+
+/* Botón de enviar en modo "detener" — mientras hay una respuesta en curso.
+   La app entera queda bloqueada mientras `streaming` está activo (chips,
+   tarjetas, resumen), así que el botón tiene que leerse claramente como la
+   salida disponible, no como un enviar deshabilitado. */
+#send-btn.is-stop {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--white);
+  opacity: 1;
+  cursor: pointer;
+  animation: send-pulse 1.6s ease-in-out infinite;
+}
+#send-btn.is-stop:hover { background: var(--accent-hover); border-color: var(--accent-hover); color: var(--white); }
+@keyframes send-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(var(--accent-rgb), 0.45); }
+  50%      { box-shadow: 0 0 0 6px rgba(var(--accent-rgb), 0); }
 }

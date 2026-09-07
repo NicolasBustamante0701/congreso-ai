@@ -1,0 +1,283 @@
+/* Ficha de expediente + chat lateral.
+   Los colores salen de las variables de style.css (--white, --text, --border…)
+   para que el modo oscuro de la app valga acá sin duplicar la paleta. */
+
+:root {
+  /* Granate del portal del Congreso: es el color institucional de la ficha
+     oficial, no el acento configurable de la app — por eso va fijo. */
+  --exp-granate: #8e1830;
+  --exp-chat-w:  380px;
+}
+[data-theme="dark"] { --exp-granate: #d4506c; }
+
+html, body { height: 100%; }
+body {
+  font-family: var(--font);
+  background: var(--off);
+  color: var(--text);
+  overflow: hidden;
+}
+
+.exp-shell {
+  display: flex;
+  height: 100vh;
+}
+
+/* ── Columna izquierda ─────────────────────────────── */
+.exp-ficha {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  background: var(--off);
+}
+
+.exp-topbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 20px;
+  background: var(--white);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.exp-back {
+  display: inline-flex; align-items: center; gap: 6px;
+  border: 1px solid var(--border); background: var(--white);
+  color: var(--text); font-family: var(--font); font-size: 13px; font-weight: 600;
+  padding: 7px 13px 7px 9px; border-radius: 9px; cursor: pointer;
+  transition: background .16s, border-color .16s;
+}
+.exp-back:hover { background: var(--hover); border-color: var(--dim); }
+.exp-back svg { width: 15px; height: 15px; }
+
+.exp-topbar-num {
+  font-size: 13px; font-weight: 700; letter-spacing: .04em;
+  color: var(--mid); text-transform: uppercase;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.exp-portal {
+  margin-left: auto;
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12.5px; font-weight: 600; color: var(--mid);
+  text-decoration: none; padding: 6px 10px; border-radius: 8px;
+  white-space: nowrap;
+}
+.exp-portal:hover { background: var(--hover); color: var(--text); }
+.exp-portal svg { width: 13px; height: 13px; }
+
+.exp-scroll {
+  flex: 1; overflow-y: auto; padding: 22px 24px 40px;
+}
+
+/* ── Estado de carga / error ───────────────────────── */
+.exp-loading { text-align: center; padding: 80px 20px; color: var(--mid); }
+.exp-loading p { margin-top: 16px; font-size: 14px; }
+.exp-spinner {
+  width: 30px; height: 30px; margin: 0 auto;
+  border: 3px solid var(--border); border-top-color: var(--exp-granate);
+  border-radius: 50%; animation: exp-spin .8s linear infinite;
+}
+@keyframes exp-spin { to { transform: rotate(360deg); } }
+
+.exp-error {
+  background: var(--white); border: 1px solid var(--border);
+  border-left: 4px solid var(--exp-granate);
+  border-radius: 10px; padding: 22px; color: var(--text);
+}
+.exp-error h3 { font-size: 15px; margin-bottom: 8px; }
+.exp-error p  { font-size: 13.5px; color: var(--mid); line-height: 1.6; }
+
+/* ── Bloques tipo "pestaña" del portal ─────────────── */
+.exp-section { margin-bottom: 26px; }
+.exp-section-tab {
+  display: inline-block;
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-radius: 9px 9px 0 0;
+  padding: 9px 16px;
+  font-size: 12.5px; font-weight: 700; letter-spacing: .07em;
+  text-transform: uppercase; color: var(--text);
+  position: relative; top: 1px;
+}
+.exp-card {
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-radius: 0 11px 11px 11px;
+  padding: 20px;
+}
+
+/* ── Grilla de campos ──────────────────────────────── */
+.exp-grid { display: grid; gap: 14px; }
+.exp-grid-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.exp-grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.exp-grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (max-width: 1150px) {
+  .exp-grid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .exp-grid-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 720px) {
+  .exp-grid-4, .exp-grid-3, .exp-grid-2 { grid-template-columns: minmax(0, 1fr); }
+}
+
+.exp-field {
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 13px 15px;
+  min-width: 0;
+}
+.exp-field-label {
+  font-size: 10.5px; font-weight: 700; letter-spacing: .09em;
+  text-transform: uppercase; color: var(--mid); margin-bottom: 6px;
+}
+.exp-field-value {
+  font-size: 13.5px; line-height: 1.5; color: var(--text); word-wrap: break-word;
+}
+.exp-field-value.empty { color: var(--dim); }
+
+/* Campos destacados (Título, Sumilla, Último estado) — barra granate a la
+   izquierda, igual que la ficha oficial. */
+.exp-field.hl {
+  border-left: 4px solid var(--exp-granate);
+  background: var(--off);
+}
+.exp-field.hl .exp-field-value { font-weight: 500; }
+.exp-field.estado .exp-field-value {
+  color: var(--exp-granate); font-weight: 700; letter-spacing: .04em;
+}
+
+.exp-list { list-style: none; }
+.exp-list li {
+  font-size: 13.5px; line-height: 1.65; padding-left: 15px; position: relative;
+}
+.exp-list li::before {
+  content: '•'; position: absolute; left: 0; color: var(--exp-granate);
+}
+
+/* ── Tablas ────────────────────────────────────────── */
+.exp-table-wrap { overflow-x: auto; }
+.exp-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.exp-table th {
+  text-align: left; padding: 11px 12px;
+  background: var(--off);
+  font-size: 10.5px; font-weight: 700; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--mid);
+  border-bottom: 1px solid var(--border); white-space: nowrap;
+}
+.exp-table td {
+  padding: 13px 12px; border-bottom: 1px solid var(--border);
+  vertical-align: top; line-height: 1.55;
+}
+.exp-table tr:last-child td { border-bottom: none; }
+.exp-table .col-adj { text-align: right; white-space: nowrap; width: 1%; }
+
+/* Sin esto la columna DETALLE se comprimía hasta partir el texto palabra por
+   palabra: el botón de adjunto (hasta 260px) y las columnas cortas se
+   repartían todo el ancho, y al detalle —que es el texto largo— no le
+   quedaba nada. `width:1%` sobre las cortas hace que el navegador les dé
+   solo lo que su contenido necesita y le ceda el resto al detalle. */
+.exp-table .col-corta  { white-space: nowrap; width: 1%; }
+.exp-table .col-detalle { min-width: 240px; }
+.exp-empty { padding: 16px 12px; font-size: 13.5px; color: var(--dim); }
+
+/* ── Adjuntos ──────────────────────────────────────── */
+.exp-adj {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 32px; height: 30px; padding: 0; margin: 0 0 0 4px;
+  border: 1px solid var(--border); background: var(--white);
+  border-radius: 7px; cursor: pointer;
+  transition: border-color .16s, background .16s;
+}
+.exp-adj:hover { border-color: var(--exp-granate); background: var(--off); }
+.exp-adj svg { width: 15px; height: 15px; color: var(--exp-granate); }
+
+/* ── Opinión ciudadana ─────────────────────────────── */
+.exp-opinion { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 14px; }
+@media (max-width: 720px) { .exp-opinion { grid-template-columns: repeat(2, minmax(0,1fr)); } }
+.exp-op {
+  border: 1px solid var(--border); border-radius: 10px;
+  padding: 18px 14px; text-align: center;
+}
+.exp-op-top { display: flex; align-items: center; justify-content: center; gap: 9px; }
+.exp-op-dot {
+  width: 27px; height: 27px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; flex-shrink: 0;
+}
+.exp-op-dot svg { width: 15px; height: 15px; }
+.exp-op-num { font-size: 20px; font-weight: 700; }
+.exp-op-label { font-size: 12px; color: var(--mid); margin-top: 7px; }
+
+/* ── Columna derecha: chat ─────────────────────────── */
+.exp-chat {
+  width: var(--exp-chat-w); flex-shrink: 0;
+  display: flex; flex-direction: column;
+  background: var(--white);
+}
+@media (max-width: 900px) { .exp-chat { width: 320px; } }
+
+.exp-chat-head {
+  padding: 15px 18px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+}
+.exp-chat-title {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 14px; font-weight: 700; color: var(--text);
+}
+.exp-chat-title svg { width: 17px; height: 17px; color: var(--exp-granate); }
+.exp-chat-sub {
+  font-size: 12px; color: var(--mid); margin-top: 5px; line-height: 1.5;
+}
+
+.exp-chat-log { flex: 1; overflow-y: auto; padding: 16px; }
+
+.exp-chips { display: flex; flex-direction: column; gap: 8px; }
+.exp-chip {
+  text-align: left; border: 1px solid var(--border); background: var(--white);
+  border-radius: 9px; padding: 10px 13px; cursor: pointer;
+  font-family: var(--font); font-size: 12.5px; color: var(--text); line-height: 1.45;
+  transition: border-color .16s, background .16s;
+}
+.exp-chip:hover { border-color: var(--exp-granate); background: var(--off); }
+
+.exp-msg { margin-bottom: 15px; font-size: 13.5px; line-height: 1.62; }
+.exp-msg.user {
+  background: var(--off); border: 1px solid var(--border);
+  border-radius: 11px; padding: 10px 13px; color: var(--text);
+}
+.exp-msg.bot { color: var(--text); }
+.exp-msg.bot p { margin-bottom: 9px; }
+.exp-msg.bot ul, .exp-msg.bot ol { margin: 0 0 9px 19px; }
+.exp-msg.bot li { margin-bottom: 4px; }
+.exp-msg.bot strong { font-weight: 700; }
+.exp-msg.bot table { width: 100%; border-collapse: collapse; margin: 9px 0; font-size: 12px; }
+.exp-msg.bot th, .exp-msg.bot td {
+  border: 1px solid var(--border); padding: 6px 8px; text-align: left;
+}
+.exp-msg.bot th { background: var(--off); font-weight: 700; }
+.exp-msg.bot a { color: var(--exp-granate); }
+.exp-msg.bot code {
+  background: var(--off); padding: 1px 5px; border-radius: 4px; font-size: 12px;
+}
+.exp-status { font-size: 12.5px; color: var(--mid); font-style: italic; }
+
+.exp-chat-input {
+  display: flex; align-items: flex-end; gap: 8px;
+  padding: 12px 14px; border-top: 1px solid var(--border); flex-shrink: 0;
+}
+.exp-chat-input textarea {
+  flex: 1; resize: none; border: 1px solid var(--border); border-radius: 10px;
+  padding: 10px 12px; font-family: var(--font); font-size: 13px;
+  background: var(--white); color: var(--text); max-height: 130px; line-height: 1.5;
+}
+.exp-chat-input textarea:focus { outline: none; border-color: var(--exp-granate); }
+.exp-chat-input button {
+  width: 36px; height: 36px; flex-shrink: 0;
+  border: none; border-radius: 10px; cursor: pointer;
+  background: var(--exp-granate); color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  transition: opacity .16s;
+}
+.exp-chat-input button svg { width: 17px; height: 17px; }
+.exp-chat-input button:disabled { opacity: .45; cursor: default; }

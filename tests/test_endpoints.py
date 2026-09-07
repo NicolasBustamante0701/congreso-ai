@@ -122,3 +122,58 @@ async def test_dashboard_sin_recorte_usa_total(client):
 
     pages._METRICS_CACHE["data"] = None
     assert r.json()["proyectos_ingresados"]["total"] == 7
+
+
+# ── /expediente ───────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+async def test_expediente_view_devuelve_html(client):
+    r = await client.get("/expediente-view", params={"numero": "00088-2026-2031-CD"})
+    assert r.status_code == 200
+    assert "text/html" in r.headers["content-type"]
+    # La vista tiene que traer sus dos columnas: la ficha y el chat del proyecto.
+    assert 'id="exp-ficha"' in r.text
+    assert 'id="exp-chat-log"' in r.text
+
+
+@pytest.mark.asyncio
+async def test_expediente_pasa_el_numero_al_scraper(client):
+    fake = {
+        "numero": "00088-2026-2031-CD",
+        "titulo": "PROPOSICIÓN LEGISLATIVA DE PRUEBA",
+        "sumilla": "PROPONE ALGO",
+        "estado": "PRESENTADO",
+        "seguimiento": [],
+        "proyectos_acumulados": [],
+        "documentacion_anexa": [],
+        "opinion_ciudadana": {},
+        "todos_los_adjuntos": [],
+    }
+    with patch("routers.expediente.fetch_expediente",
+               new=AsyncMock(return_value=fake)) as mock:
+        r = await client.get("/expediente", params={"numero": "00088-2026-2031-CD"})
+
+    assert r.status_code == 200
+    assert r.json()["numero"] == "00088-2026-2031-CD"
+    mock.assert_awaited_once_with("00088-2026-2031-CD")
+
+
+@pytest.mark.asyncio
+async def test_expediente_con_numero_vacio_no_llama_al_scraper(client):
+    with patch("routers.expediente.fetch_expediente", new=AsyncMock()) as mock:
+        r = await client.get("/expediente", params={"numero": "   "})
+
+    assert r.status_code == 200
+    assert "error" in r.json()
+    mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_expediente_devuelve_error_si_el_scraper_revienta(client):
+    # Que SPLEY se caiga no puede tumbar el endpoint: el frontend espera JSON
+    # con "error" para poder mostrar el aviso en la ficha.
+    with patch("routers.expediente.fetch_expediente",
+               new=AsyncMock(side_effect=RuntimeError("SPLEY caído"))):
+        r = await client.get("/expediente", params={"numero": "00088-2026-2031-CD"})
+
+    assert r.status_code == 200
+    assert "error" in r.json()

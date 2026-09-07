@@ -73,7 +73,7 @@ def test_marcado_inline_se_limpia_en_celdas():
 def test_incluye_pie():
     doc = render("contenido")
     todo = " ".join(texts(doc))
-    assert "Generado por Solón" in todo
+    assert "Generado por Diana" in todo
 
 
 def test_markdown_vacio_no_revienta():

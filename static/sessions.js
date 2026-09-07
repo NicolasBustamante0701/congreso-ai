@@ -312,7 +312,7 @@
   .ftr{margin-top:40px;border-top:1px solid #ccc;padding-top:12px;font-size:9pt;color:#666;text-align:center}
 </style></head><body>
 ${parseMarkdown(md)}
-<div class="ftr">Solón — Sistema de Monitoreo Parlamentario · ${date}</div>
+<div class="ftr">Diana — Sistema de Monitoreo Parlamentario · ${date}</div>
 </body></html>`;
   }
 

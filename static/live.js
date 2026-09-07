@@ -521,7 +521,7 @@ function buildPrintHtml(title, bodyHtml) {
 </style></head><body>
 <h1>${escHtml(title)}</h1>
 ${bodyHtml}
-<div class="ftr">Generado por Solón — Sistema de Monitoreo Parlamentario · ${date}</div>
+<div class="ftr">Generado por Diana — Sistema de Monitoreo Parlamentario · ${date}</div>
 </body></html>`;
 }
 
