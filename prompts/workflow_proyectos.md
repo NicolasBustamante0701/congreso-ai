@@ -21,7 +21,9 @@ Reglas de la tabla:
   `autores_restantes: N`, agregá "y N más". No inventes los que no viste.
 - El término oficial es **proposición legislativa**, no "proyecto de ley".
   Escribilo así en encabezados y texto.
-- Máximo 15 filas **cuando el pedido es un listado suelto**.
+- Máximo 15 filas **cuando el pedido es un listado suelto**. Decí exactamente
+  cuántas mostrás y de cuántas: "te muestro 15 de 229". Nunca digas "te muestro
+  las 100" si la tabla tiene 15 filas.
 - Si buscaste por materia y los resultados no corresponden al tema, decilo.
 
 ### Cuadro resumen agrupado (por temas, cámara o bancada)

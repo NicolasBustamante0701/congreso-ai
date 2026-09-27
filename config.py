@@ -4,15 +4,77 @@ Configuración central: rutas, credenciales, modelos y carga de prompts.
 Todo lo que antes vivía disperso en la cabecera de server.py se centraliza aquí
 para que routers/ y services/ no dependan del módulo de arranque.
 """
+import contextvars
 import logging
 import os
 import sys
+import threading
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from dotenv import load_dotenv
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("congreso-ai")
+
+# ── Logging ──────────────────────────────────────────────────────────────────
+# Empaquetada, el stdout del server lo recibe Electron y no lo ve nadie: sin
+# archivo, una caída no dejaba rastro. Cada línea lleva el id del request (lo
+# fija services/observability.py) para poder seguir un pedido de punta a punta.
+request_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("request_id", default="-")
+
+LOG_FORMAT = "%(asctime)s [%(levelname)s] [%(request_id)s] %(name)s: %(message)s"
+
+
+class _RequestIdFilter(logging.Filter):
+    def filter(self, record):
+        record.request_id = request_id_var.get()
+        return True
+
+
+def _log_dir() -> Path:
+    if os.getenv("DIANA_LOG_DIR"):
+        return Path(os.environ["DIANA_LOG_DIR"])
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Logs" / "Diana"
+    return Path(os.getenv("XDG_STATE_HOME", Path.home() / ".local" / "state")) / "diana"
+
+
+LOG_FILE = _log_dir() / "server.log"
+
+
+def _setup_logging() -> None:
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    fmt = logging.Formatter(LOG_FORMAT)
+    handlers: list[logging.Handler] = [logging.StreamHandler()]
+    try:
+        LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        handlers.append(RotatingFileHandler(LOG_FILE, maxBytes=2_000_000,
+                                            backupCount=5, encoding="utf-8"))
+    except OSError as e:
+        print(f"[diana] sin log a archivo ({LOG_FILE}): {e}", file=sys.stderr)
+    for h in handlers:
+        h.setFormatter(fmt)
+        h.addFilter(_RequestIdFilter())
+        root.addHandler(h)
+    # El middleware ya registra cada request con su duración.
+    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+    for ruidoso in ("httpx", "httpx2", "httpcore", "openai", "groq"):
+        logging.getLogger(ruidoso).setLevel(logging.WARNING)
+
+    def _hook(exc_type, exc, tb):
+        logger.critical("Excepción no capturada", exc_info=(exc_type, exc, tb))
+
+    def _thread_hook(args):
+        logger.critical("Excepción no capturada en el hilo %s", args.thread.name if args.thread else "?",
+                        exc_info=(args.exc_type, args.exc_value, args.exc_traceback))
+
+    sys.excepthook = _hook
+    threading.excepthook = _thread_hook
+
+
+if not logging.getLogger().handlers:
+    _setup_logging()
 
 # ── Rutas ────────────────────────────────────────────────────────────────────
 # Con PyInstaller los datos van a sys._MEIPASS; en dev, al directorio del repo.
@@ -59,8 +121,9 @@ _PROVIDERS = {
     "groq": {
         "base_url":     "https://api.groq.com/openai/v1",
         "api_key":      GROQ_API_KEY,
-        "router_model": "llama-3.1-8b-instant",
-        "main_model":   "llama-3.3-70b-versatile",
+        # Los llama-3.x se dieron de baja (404, verificado 26/09/2026).
+        "router_model": "openai/gpt-oss-20b",
+        "main_model":   "openai/gpt-oss-120b",
     },
     "gemini": {
         "base_url":     "https://generativelanguage.googleapis.com/v1beta/openai/",
@@ -75,8 +138,8 @@ _PROVIDERS = {
     "cerebras": {
         "base_url":     "https://api.cerebras.ai/v1",
         "api_key":      os.getenv("CEREBRAS_API_KEY", ""),
-        "router_model": "llama3.1-8b",
-        "main_model":   "llama-3.3-70b",
+        "router_model": "gpt-oss-120b",
+        "main_model":   "gpt-oss-120b",
     },
     "openai": {
         "base_url":     None,  # SDK usa el endpoint oficial por default
@@ -86,7 +149,41 @@ _PROVIDERS = {
     },
 }
 
-_provider_cfg = _PROVIDERS.get(LLM_PROVIDER, _PROVIDERS["gemini"])
+if LLM_PROVIDER not in _PROVIDERS:
+    logger.warning("LLM_PROVIDER=%r no existe, se usa gemini", LLM_PROVIDER)
+    LLM_PROVIDER = "gemini"
+PROVIDERS = _PROVIDERS
+
+# Si el proveedor activo falla o no responde, se prueba con los demás que
+# tengan key cargada, en este orden. Groq casi siempre está (su key es
+# obligatoria para Whisper). LLM_FALLBACKS=none lo desactiva; una lista
+# ("groq,cerebras") fija el orden.
+_fallbacks_env = os.getenv("LLM_FALLBACKS", "").strip().lower()
+if _fallbacks_env == "none":
+    _orden = []
+elif _fallbacks_env:
+    _orden = [p.strip() for p in _fallbacks_env.split(",")]
+else:
+    _orden = ["groq", "gemini", "cerebras", "openai"]
+LLM_FALLBACKS = [p for p in _orden
+                 if p in _PROVIDERS and p != LLM_PROVIDER and _PROVIDERS[p]["api_key"]]
+
+# connect: sin red o DNS caído falla rápido. read: máximo silencio entre dos
+# fragmentos del stream antes de dar al proveedor por colgado (el default del
+# SDK era 600 s × 3 intentos).
+#
+# Con un respaldo disponible se espera menos: medido el 26/09/2026, Gemini
+# (tier gratis) tardó entre 0.5 y 28 s en dar el primer token para la MISMA
+# pregunta. Pasado FIRST_TOKEN_TIMEOUT (stream) o ROUTER_TIMEOUT (router, sin
+# streaming) se pasa al siguiente proveedor. El último de la cadena espera
+# hasta LLM_READ_TIMEOUT.
+LLM_CONNECT_TIMEOUT = float(os.getenv("LLM_CONNECT_TIMEOUT", 10))
+LLM_READ_TIMEOUT    = float(os.getenv("LLM_READ_TIMEOUT", 60))
+FIRST_TOKEN_TIMEOUT = float(os.getenv("FIRST_TOKEN_TIMEOUT", 15))
+ROUTER_TIMEOUT      = float(os.getenv("ROUTER_TIMEOUT", 15))
+WHISPER_TIMEOUT     = float(os.getenv("WHISPER_TIMEOUT", 120))
+
+_provider_cfg = _PROVIDERS[LLM_PROVIDER]
 LLM_BASE_URL  = _provider_cfg["base_url"]
 LLM_API_KEY   = _provider_cfg["api_key"]
 ROUTER_MODEL  = _provider_cfg["router_model"]

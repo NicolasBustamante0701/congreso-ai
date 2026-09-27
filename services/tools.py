@@ -37,7 +37,11 @@ TOOLS = [
                 "properties": {
                     "materia": {
                         "type": "string",
-                        "description": "Tema o materia a buscar (ej: 'educacion', 'salud', 'transporte', 'mineria')"
+                        "description": (
+                            "UN solo tema, en una o dos palabras (ej: 'salud', 'salud mental', "
+                            "'educacion', 'mineria'). Se buscan en el título y el título debe "
+                            "contenerlas TODAS: no mandes listas de sinónimos."
+                        )
                     },
                     "autor": {
                         "type": "string",

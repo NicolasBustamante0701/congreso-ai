@@ -4,7 +4,7 @@ import asyncio
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 
-from config import GROQ_API_KEY, LLM_API_KEY, MAIN_MODEL, logger, static_file
+from config import GROQ_API_KEY, LLM_API_KEY, logger, static_file
 from scraper import fetch_videos_youtube, get_yt_captions, transcribe_with_whisper
 from services import llm, sse
 from services.prompt_registry import build_sesion_prompt
@@ -37,20 +37,19 @@ async def sesiones_videos():
 
 async def _stream_resumen(titulo: str, texto: str):
     """Genera el resumen de un transcript y lo emite como SSE."""
-    client = llm.get_client()
     messages = [
         {"role": "system", "content": SESION_SYSTEM},
         {"role": "user", "content": build_sesion_prompt(titulo, texto)},
     ]
-    try:
-        async for delta in llm.stream_deltas(
-            client, messages, model=MAIN_MODEL, max_tokens=3000, temperature=0.3
-        ):
-            yield sse.text(delta)
-        yield sse.DONE
-    except Exception as e:
-        logger.error("Resumen de sesión falló: %s", e)
-        yield sse.error(llm.friendly_error(e))
+    async for kind, payload in llm.stream(messages, max_tokens=3000, temperature=0.3):
+        if kind == "text":
+            yield sse.text(payload)
+        elif kind == "status":
+            yield sse.status(payload)
+        else:
+            yield sse.error(payload)
+            return
+    yield sse.DONE
 
 
 @router.post("/sesiones/resumir")
@@ -83,9 +82,14 @@ async def sesiones_resumir(request: Request):
                 f"No hay subtítulos. Descargando audio ({label})... esto toma ~2 minutos."
             )
 
-            tr = await loop.run_in_executor(
-                None, transcribe_with_whisper, video_id, GROQ_API_KEY, minutes
-            )
+            try:
+                tr = await loop.run_in_executor(
+                    None, transcribe_with_whisper, video_id, GROQ_API_KEY, minutes
+                )
+            except Exception as e:
+                logger.exception("Whisper falló para %s", video_id)
+                yield sse.error(f"No se pudo transcribir el audio: {str(e)[:200]}")
+                return
             if not tr.get("ok"):
                 yield sse.error(tr.get("error", "No se pudo transcribir el audio."))
                 return

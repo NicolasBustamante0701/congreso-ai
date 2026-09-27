@@ -7,12 +7,15 @@ Para regrabar una cassette, borrá el .yaml y volvé a correr los tests.
 """
 import json
 import os
+import tempfile
 from pathlib import Path
 
 import pytest
 
 # La app no debe exigir una key real para importarse.
 os.environ.setdefault("GROQ_API_KEY", "test-key-mock")
+# Que los tests no escriban en el log real de la app.
+os.environ["DIANA_LOG_DIR"] = str(Path(tempfile.gettempdir()) / "diana-tests-logs")
 
 TESTS_DIR = Path(__file__).parent
 CASSETTES_DIR = TESTS_DIR / "cassettes"

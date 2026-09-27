@@ -17,9 +17,10 @@ import re
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 
-from config import MAIN_MODEL, ROUTER_MODEL, logger
+from config import logger
 from scraper import fetch_transcript_youtube
 from services import llm, sse
+from services.observability import timed
 from services.prompt_registry import (
     ROUTER_PROMPT,
     SYSTEM_MINI,
@@ -33,6 +34,11 @@ from services.tools import STATUS_LABELS, TOOL_MAP, TOOLS
 
 # Un tool result de 7k chars ≈ 2000 tokens. Más que eso dispara el TPM.
 MAX_TOOL_RESULT_CHARS = 7000
+
+# Tope por intento de una herramienta. Cada request al Congreso ya tiene 25s
+# de timeout, pero algunas herramientas encadenan varios (el expediente pide 5
+# pestañas): sin tope total, una herramienta podía colgar el chat minutos.
+TOOL_TIMEOUT_SECONDS = 60
 
 # Tope propio para las herramientas que devuelven listados largos.
 #
@@ -127,6 +133,14 @@ YT_ID_RE = re.compile(
 # inventar por sobre la precisión del filtro (SPLEY igual no filtra bien por
 # materia — ver comentario en _fetch_spley_por_materia en scraper.py).
 DEFAULT_DIAS_PROYECTOS = 15
+
+# Un listado suelto muestra como mucho 15 filas (workflow_proyectos.md). Si le
+# llegaban 100, el modelo mostraba 10-15 y decía "te muestro las 100". Solo
+# cuando piden agrupar, contar o desglosar necesita el lote entero.
+MAX_FILAS_LISTADO = 15
+AGRUPADO_RE = re.compile(
+    r"\b(agrup\w*|cuadro|temas|clasific\w*|desglos\w*|resumen|bancadas?|"
+    r"cu[aá]nt[oa]s|cantidad|total|todos|todas)\b", re.IGNORECASE)
 DIAS_PROYECTOS_RE = re.compile(r"(\d+)\s*d[ií]as", re.IGNORECASE)
 RECIENTE_RE = re.compile(r"\b(novedades|reciente|recientes|últim[oa]s?)\b", re.IGNORECASE)
 
@@ -255,12 +269,41 @@ def _fix_nombres_reformateados(texto: str, nombres_normalizados: set[str]) -> st
     return texto
 
 
+# ── Verificación de citas ──────────────────────────────────────────────────
+#
+# El modelo a veces cita números de proyecto o enlaces que no estaban en los
+# datos (pasó con proyectos "de salud mental" que no existían). La respuesta
+# ya salió en streaming, así que no se puede borrar: se agrega una advertencia
+# al final nombrando exactamente qué no se pudo verificar.
+NUM_PROYECTO_RE = re.compile(r"\b(\d{1,5})\s*[-/]\s*(\d{4})(?:\s*-\s*\d{4})?\s*-\s*([A-Z]{2})\b")
+LINK_CONGRESO_RE = re.compile(r"https?://[^\s)\]>\"'`]*congreso\.gob\.pe[^\s)\]>\"'`]*")
+
+
+def _clave_proyecto(m: re.Match) -> tuple:
+    # "00434-2026-2031-CD" y "434-2026-2031-CD" son el mismo proyecto.
+    return int(m.group(1)), m.group(2), m.group(3)
+
+
+def _citas_no_verificadas(respuesta: str, fuentes: str) -> tuple[list[str], list[str]]:
+    """Números de proyecto y enlaces del Congreso que están en la respuesta pero no en las fuentes."""
+    nums_ok = {_clave_proyecto(m) for m in NUM_PROYECTO_RE.finditer(fuentes)}
+    links_ok = {u.rstrip(".,;:") for u in LINK_CONGRESO_RE.findall(fuentes)}
+    nums, links = [], []
+    for m in NUM_PROYECTO_RE.finditer(respuesta):
+        if _clave_proyecto(m) not in nums_ok and m.group(0) not in nums:
+            nums.append(m.group(0))
+    for u in LINK_CONGRESO_RE.findall(respuesta):
+        u = u.rstrip(".,;:")
+        if u not in links_ok and u not in links:
+            links.append(u)
+    return nums, links
+
+
 class ChatOrchestrator:
     """Ejecuta una vuelta completa de conversación sobre el historial dado."""
 
-    def __init__(self, messages: list, client=None):
+    def __init__(self, messages: list):
         self.messages = messages or []
-        self.client = client or llm.get_client()
         ahora = datetime.now()
         self.hoy = ahora.strftime("%d/%m/%Y")
         # Ventana del resumen semanal: los 7 días que terminan hoy.
@@ -448,16 +491,7 @@ class ChatOrchestrator:
     async def _phase1(self):
         """Devuelve el choice del router, o None si ya se emitió una respuesta."""
         try:
-            resp = self.client.chat.completions.create(
-                model=ROUTER_MODEL,
-                messages=self._router_messages(),
-                tools=TOOLS,
-                tool_choice="required",
-                max_tokens=512,
-                temperature=0.2,
-                stream=False,
-            )
-            return resp.choices[0]
+            return await llm.complete_router(self._router_messages(), tools=TOOLS)
         except Exception as e:
             logger.warning("Fase 1 (router) falló: %s", e)
             raise
@@ -472,15 +506,8 @@ class ChatOrchestrator:
             return
 
         msgs = [{"role": "system", "content": self.system_base}] + self.conversation
-        try:
-            async for delta in llm.stream_deltas(
-                self.client, msgs, model=MAIN_MODEL, max_tokens=2048
-            ):
-                yield sse.text(delta)
-            yield sse.DONE
-        except Exception as e2:
-            logger.error("Fallback de Fase 1 falló: %s", e2)
-            yield sse.error(llm.friendly_error(e2))
+        async for ev in self._stream_final(msgs, max_tokens=2048):
+            yield ev
 
     # ── Fase 2: ejecución de herramientas ────────────────────────────────────
 
@@ -557,7 +584,7 @@ class ChatOrchestrator:
         for tc in real_calls:
             name = tc.function.name
             self.tools_usados.append(name)
-            args = self._clean_args(tc.function.arguments)
+            args = self._ajustar_args(name, self._clean_args(tc.function.arguments))
 
             yield sse.status(STATUS_LABELS.get(name, "Consultando el Congreso..."))
 
@@ -567,7 +594,9 @@ class ChatOrchestrator:
 
             self.tool_msgs.append({
                 "role": "user",
-                "content": f"[Resultado de la herramienta {name}]\n{result_str}",
+                "content": f"[Resultado de la herramienta {name}]\n"
+                           f"(Datos que consultó el sistema para responder la última pregunta; "
+                           f"el usuario no los envió ni los ve.)\n{result_str}",
             })
 
     async def _phase2_tools_fijas(self, tools: tuple):
@@ -583,6 +612,7 @@ class ChatOrchestrator:
         # de tool_calls, para no depender de metadata específica de un
         # proveedor (ver comentario ahí).
         for name, args in tools:
+            args = self._ajustar_args(name, dict(args)) if not self.is_resumen else args
             self.tools_usados.append(name)
             yield sse.status(STATUS_LABELS.get(name, "Consultando el Congreso..."))
 
@@ -592,8 +622,20 @@ class ChatOrchestrator:
 
             self.tool_msgs.append({
                 "role": "user",
-                "content": f"[Resultado de la herramienta {name}]\n{result_str}",
+                "content": f"[Resultado de la herramienta {name}]\n"
+                           f"(Datos que consultó el sistema para responder la última pregunta; "
+                           f"el usuario no los envió ni los ve.)\n{result_str}",
             })
+
+    def _ajustar_args(self, name: str, args: dict) -> dict:
+        if name != "buscar_proyectos":
+            return args
+        # El pedido decía "últimos N días": que el router no pierda la ventana.
+        if self.forzar_dias_proyectos and "dias" not in args and "numero" not in args:
+            args["dias"] = self.forzar_dias_proyectos
+        if not AGRUPADO_RE.search(self.last_msg):
+            args["limit"] = min(int(args.get("limit") or MAX_FILAS_LISTADO), MAX_FILAS_LISTADO)
+        return args
 
     @staticmethod
     async def _run_tool(name: str, args: dict) -> dict:
@@ -614,7 +656,8 @@ class ChatOrchestrator:
         last_exc = None
         for intento in range(2):
             try:
-                result = await TOOL_MAP[name](args)
+                with timed("herramienta", nombre=name, args=args, intento=intento + 1):
+                    result = await asyncio.wait_for(TOOL_MAP[name](args), TOOL_TIMEOUT_SECONDS)
                 break
             except Exception as e:
                 last_exc = e
@@ -671,8 +714,12 @@ class ChatOrchestrator:
             # El presupuesto sigue el tamaño de lo que vino en vez de ser fijo:
             # así el caso grande entra entero sin inflar cada respuesta corta,
             # que son la mayoría.
+            # 1800 cortaba la tabla a la mitad: 15 filas con título completo
+            # y autores rondan 2500 tokens, y en Gemini el razonamiento
+            # interno también descuenta de este presupuesto. Es un techo, no
+            # un costo: solo se paga lo que se genera.
             chars = sum(len(m.get("content") or "") for m in self.tool_msgs)
-            return 14000 if chars > 12000 else 1800
+            return 14000 if chars > 12000 else 8000
         return 2500
 
     async def _stream_final(self, msgs, max_tokens):
@@ -686,10 +733,10 @@ class ChatOrchestrator:
         """
         nombres = _extraer_nombres_normalizados(self.tool_msgs) if self.tool_msgs else set()
         buffer = ""
-        async for kind, payload in llm.stream_with_retry(
-            self.client, msgs, model=MAIN_MODEL, max_tokens=max_tokens
-        ):
+        completo = ""
+        async for kind, payload in llm.stream(msgs, max_tokens=max_tokens):
             if kind == "text":
+                completo += payload
                 if nombres:
                     buffer += payload
                 else:
@@ -704,13 +751,51 @@ class ChatOrchestrator:
             CHUNK = 60
             for i in range(0, len(buffer), CHUNK):
                 yield sse.text(buffer[i:i + CHUNK])
+        aviso = self._verificar_citas(completo, msgs)
+        if aviso:
+            yield sse.text(aviso)
         yield sse.DONE
+
+    def _verificar_citas(self, respuesta: str, msgs: list) -> str:
+        # Fuentes: lo que el modelo tuvo delante (resultados de herramientas,
+        # PDF o transcript cargado, turnos anteriores ya verificados).
+        fuentes = "\n".join(str(m.get("content") or "") for m in msgs + self.messages)
+        nums, links = _citas_no_verificadas(respuesta, fuentes)
+        if not nums and not links:
+            return ""
+        logger.warning("Citas no verificadas en la respuesta: proyectos=%s enlaces=%s "
+                       "(herramientas: %s)", nums, links, self.tools_usados)
+        partes = []
+        if nums:
+            partes.append("números de proyecto " + ", ".join(nums))
+        if links:
+            partes.append("enlaces " + ", ".join(links))
+        return ("\n\n---\n**Ojo:** no pude verificar " + " y ".join(partes) +
+                " contra los datos consultados al Congreso. Pueden estar mal: "
+                "confirmalos en el portal SPLEY antes de usarlos.")
 
     # ── Punto de entrada ─────────────────────────────────────────────────────
 
     async def run(self):
-        """Generador de eventos SSE para una vuelta completa de conversación."""
+        """
+        Generador de eventos SSE para una vuelta completa de conversación.
+
+        Cualquier excepción termina en un evento de error legible: sin esto el
+        stream se cortaba a mitad y el frontend se quedaba sin saber qué pasó.
+        """
+        try:
+            async for ev in self._run():
+                yield ev
+        except Exception as e:
+            logger.exception("Chat falló (último mensaje: %.120r)", self.last_msg)
+            yield sse.error(llm.friendly_error(e))
+            yield sse.DONE
+
+    async def _run(self):
         self._analyze()
+        logger.info("Chat: %d mensajes, resumen=%s, proyectos_dias=%s, conversacional=%s, atajo=%s",
+                    len(self.messages), self.is_resumen, self.forzar_dias_proyectos,
+                    self.es_conversacional, self._short_circuit)
 
         if self._short_circuit:
             async for ev in self._run_short_circuit():
@@ -722,13 +807,24 @@ class ChatOrchestrator:
             async for ev in self._phase2_tools_fijas(RESUMEN_TOOLS):
                 yield ev
         elif self.forzar_dias_proyectos is not None:
-            # "proyectos de ley de los últimos N días" — el router fallaba en
-            # elegir buscar_proyectos acá con demasiada frecuencia (ver
-            # _detecta_proyectos_por_dias). Forzarlo evita que el modelo
-            # grande termine inventando una tabla de proyectos falsos.
-            tools = (("buscar_proyectos", {"dias": self.forzar_dias_proyectos}),)
-            async for ev in self._phase2_tools_fijas(tools):
-                yield ev
+            # "proyectos de ley de los últimos N días". Primero el router,
+            # porque sabe extraer el tema ("de SALUD de los últimos 15 días");
+            # forzar la búsqueda de entrada descartaba el tema. Pero el router
+            # a veces no busca nada y el modelo inventaba una tabla entera
+            # (ver _detecta_proyectos_por_dias): en ese caso se fuerza.
+            choice = None
+            try:
+                choice = await self._phase1()
+            except Exception as e:
+                logger.warning("Router falló en pedido de proyectos por días, se fuerza: %s", e)
+            llamadas = (choice.message.tool_calls or []) if choice is not None else []
+            if any(tc.function.name == "buscar_proyectos" for tc in llamadas):
+                async for ev in self._phase2(choice):
+                    yield ev
+            else:
+                tools = (("buscar_proyectos", {"dias": self.forzar_dias_proyectos}),)
+                async for ev in self._phase2_tools_fijas(tools):
+                    yield ev
         elif self.es_conversacional:
             # Saludo o cortesía: el router siempre contesta responder_directo
             # acá, así que se ahorra ese viaje de red entero (ver
@@ -750,10 +846,15 @@ class ChatOrchestrator:
         # Con tool results el contexto ya viene del resultado; mandar 20 mensajes
         # extra dispara el TPM. Con herramientas: solo los últimos 4.
         conv_p3 = self.messages[-4:] if self.tool_msgs else self.conversation
+        # Los datos van ANTES de la pregunta: puestos al final, el último
+        # mensaje "del usuario" era un bloque de datos y el modelo respondía
+        # como si el usuario se los hubiera traído ("los que acabas de traer"),
+        # o arrancaba de cero con un saludo a mitad de la conversación.
         msgs = (
             [{"role": "system", "content": self._phase3_system()}]
-            + conv_p3
+            + conv_p3[:-1]
             + self.tool_msgs
+            + conv_p3[-1:]
         )
 
         async for ev in self._stream_final(msgs, self._phase3_max_tokens()):

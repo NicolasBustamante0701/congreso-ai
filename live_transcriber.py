@@ -7,6 +7,7 @@ no perder palabras que caigan justo en el corte entre chunks.
 import array
 import asyncio
 import difflib
+import logging
 import math
 import os
 import shutil
@@ -17,6 +18,8 @@ import time
 
 # NOTE: Using YouTube streams via yt-dlp + ffmpeg may conflict with YouTube ToS
 # in a public production context. Fine for personal/dev use.
+
+logger = logging.getLogger("congreso-ai")
 
 SAMPLE_RATE      = 16000  # Hz — óptimo para Whisper
 CHUNK_SECONDS    = 10     # cuánto avanza el "reloj" de la transcripción por chunk
@@ -226,7 +229,10 @@ async def stream_transcription(video_id: str, api_key: str, start_seconds: int =
     yield {"status": f"Stream resuelto ({kind}). Iniciando captura de audio..."}
 
     # ── Step 2: ffmpeg emite PCM crudo continuo por stdout ──────
-    cmd = [ffmpeg_exe(), "-y"]
+    # -nostats/-loglevel error: ffmpeg escribe progreso a stderr sin parar y
+    # nadie lo leía — con el pipe lleno (64 KB, a los pocos minutos) ffmpeg se
+    # bloqueaba y la transcripción moría en silencio. Además se drena abajo.
+    cmd = [ffmpeg_exe(), "-y", "-nostats", "-loglevel", "error"]
     if start_seconds:
         # -ss ANTES de -i: seek de entrada, salta directo al segmento HLS
         # correspondiente en vez de descargar y descartar todo lo anterior.
@@ -249,7 +255,18 @@ async def stream_transcription(video_id: str, api_key: str, start_seconds: int =
         stderr=asyncio.subprocess.PIPE,
     )
 
+    logger.info("ffmpeg pid=%s para %s (%s, desde %ss)", proc.pid, video_id, kind, start_seconds)
     yield {"status": "Capturando audio... (primera transcripción en ~10 s)"}
+
+    stderr_tail = bytearray()
+
+    async def _drain_stderr():
+        while True:
+            line = await proc.stderr.readline()
+            if not line:
+                return
+            stderr_tail.extend(line)
+            del stderr_tail[:-2000]
 
     # Leer y transcribir en el MISMO loop bloqueaba a ffmpeg: mientras
     # esperábamos a Whisper (1-2s+ por chunk), nadie drenaba proc.stdout, su
@@ -272,6 +289,7 @@ async def stream_transcription(video_id: str, api_key: str, start_seconds: int =
             await audio_q.put(None)
 
     reader_task = asyncio.ensure_future(_drain_stdout())
+    stderr_task = asyncio.ensure_future(_drain_stderr())
 
     # Red de seguridad independiente: si el cliente se desconecta de un
     # stream EN VIVO y nada del lado async llega a enterarse (visto en
@@ -282,8 +300,14 @@ async def stream_transcription(video_id: str, api_key: str, start_seconds: int =
     # threading.Thread con time.sleep() no depende del event loop para
     # nada, no puede ser cancelado por ningún cancel scope, y es la única
     # garantía real de que ffmpeg no queda corriendo para siempre.
+    # El Event evita matar un PID ajeno: si ffmpeg ya terminó, el sistema
+    # puede haber reusado su número para otro proceso.
+    ffmpeg_termino = threading.Event()
+
     def _watchdog_thread(pid: int):
-        time.sleep(MAX_SESSION_SECONDS)
+        if ffmpeg_termino.wait(MAX_SESSION_SECONDS):
+            return
+        logger.warning("Watchdog: matando ffmpeg pid=%s por límite de sesión", pid)
         try:
             os.kill(pid, signal.SIGKILL)
         except ProcessLookupError:
@@ -324,6 +348,7 @@ async def stream_transcription(video_id: str, api_key: str, start_seconds: int =
                     try:
                         text = await loop.run_in_executor(None, _transcribe_pcm, window, api_key)
                     except Exception as exc:
+                        logger.warning("Whisper falló en el tramo %s de %s: %s", ts, video_id, exc)
                         # Una key inválida no se arregla sola: seguir capturando
                         # repite el mismo 401 cada 10 s y el usuario ve un
                         # volcado del SDK en vez de saber qué le falta.
@@ -356,33 +381,35 @@ async def stream_transcription(video_id: str, api_key: str, start_seconds: int =
         # Salimos del while por EOF (sin cancelación) — chequea si fue un error real.
         await proc.wait()
         if proc.returncode not in (0, None):
-            stderr_out = b""
             try:
-                stderr_out = await asyncio.wait_for(proc.stderr.read(), timeout=2)
+                await asyncio.wait_for(stderr_task, timeout=2)
             except Exception:
                 pass
-            yield {"error": f"ffmpeg terminó con error (código {proc.returncode}). {stderr_out.decode(errors='replace')[:200]}"}
+            detalle = stderr_tail.decode(errors="replace").strip()[-200:]
+            logger.error("ffmpeg terminó con código %s para %s: %s",
+                         proc.returncode, video_id, detalle)
+            yield {"error": f"ffmpeg terminó con error (código {proc.returncode}). {detalle}"}
 
     except asyncio.CancelledError:
         pass
     finally:
-        # El watchdog es un hilo daemon con time.sleep(): no hace falta (ni
-        # se puede) cancelarlo — si ffmpeg ya está muerto para cuando
-        # despierte, os.kill() sobre un pid inexistente simplemente no hace
-        # nada (ProcessLookupError, ya capturado ahí mismo).
-        if not reader_task.done():
-            reader_task.cancel()
-            try:
-                await reader_task
-            except BaseException:
-                pass
+        # Todo lo que importa va ANTES del primer await: si el cliente se
+        # desconectó, cada await de acá vuelve a recibir CancelledError y lo
+        # que siga no corre (visto en pruebas: ffmpeg moría pero el watchdog
+        # nunca se enteraba).
+        for task in (reader_task, stderr_task):
+            task.cancel()
         if proc.returncode is None:
             proc.terminate()
-            try:
-                await asyncio.wait_for(proc.wait(), timeout=5)
-            except Exception:
-                proc.kill()
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=5)
+        except BaseException:
+            # Timeout o cierre cancelado: SIGKILL no se puede ignorar.
+            if proc.returncode is None:
                 try:
-                    await asyncio.wait_for(proc.wait(), timeout=5)
-                except Exception:
+                    proc.kill()
+                except ProcessLookupError:
                     pass
+        finally:
+            ffmpeg_termino.set()
+            logger.info("Transcripción de %s cerrada (ffmpeg código %s)", video_id, proc.returncode)

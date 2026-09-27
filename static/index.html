@@ -8,7 +8,7 @@
   <link rel="manifest" href="/static/manifest.json">
   <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon.ico">
   <link rel="icon" type="image/png" sizes="192x192" href="/static/icon-192.png">
-  <link rel="stylesheet" href="/static/style.css?v=12">
+  <link rel="stylesheet" href="/static/style.css?v=13">
   <script src="/static/marked.min.js"></script>
   <script src="/static/purify.min.js"></script>
 </head>
@@ -24,6 +24,44 @@
     <path d="M2 12h28M16 3L2 12h28L16 3z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" fill="none"/>
   </svg>
 </button>
+
+<div class="ai-modal-backdrop" id="ai-modal" style="display:none" role="dialog" aria-modal="true" aria-labelledby="ai-modal-title">
+  <div class="ai-modal">
+    <div class="ai-modal-head">
+      <h2 id="ai-modal-title">Ajustes de IA</h2>
+      <button class="ai-modal-close" id="ai-modal-close" title="Cerrar">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 5l10 10M15 5L5 15"/></svg>
+      </button>
+    </div>
+    <p class="ai-modal-intro" id="ai-intro">
+      Diana usa un modelo de IA para responder. Pegá tu propia API key: se guarda
+      cifrada solo en esta computadora y nunca se comparte.
+    </p>
+    <div class="ai-status" id="ai-status"></div>
+
+    <label class="ai-label" for="ai-provider">Proveedor</label>
+    <select class="ai-input" id="ai-provider">
+      <option value="gemini">Google Gemini (gratis, recomendado)</option>
+      <option value="groq">Groq (gratis)</option>
+      <option value="openai">OpenAI (pago)</option>
+      <option value="cerebras">Cerebras</option>
+    </select>
+
+    <label class="ai-label" for="ai-key">API key</label>
+    <input class="ai-input" id="ai-key" type="password" autocomplete="off" spellcheck="false" placeholder="Pegá tu API key">
+    <button class="ai-link" id="ai-key-help" type="button">¿Cómo consigo una key gratis?</button>
+
+    <label class="ai-label" for="ai-groq-key">Key de Groq para transcribir sesiones <span class="ai-optional">(opcional)</span></label>
+    <input class="ai-input" id="ai-groq-key" type="password" autocomplete="off" spellcheck="false" placeholder="Solo para la transcripción en vivo">
+
+    <div class="ai-msg" id="ai-msg" role="status"></div>
+
+    <div class="ai-actions">
+      <button class="ai-btn-secondary" id="ai-clear" style="display:none">Borrar mi key</button>
+      <button class="ai-btn-primary" id="ai-save">Probar y guardar</button>
+    </div>
+  </div>
+</div>
 
 <div class="layout">
 
@@ -116,6 +154,13 @@
             <path d="M10 3a5 5 0 0 0 0 14" fill="currentColor" stroke="none"/>
           </svg>
           <span>Color de acento</span>
+        </button>
+        <button class="profile-menu-item" id="ai-settings-btn" style="display:none">
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="7" cy="13" r="3.5"/>
+            <path d="M9.5 10.5L17 3M14 6l2 2M12 8l1.5 1.5"/>
+          </svg>
+          <span>Ajustes de IA</span>
         </button>
       </div>
     </div>
@@ -366,7 +411,7 @@
   </symbol>
 </svg>
 
-<script src="/static/app.js?v=19"></script>
+<script src="/static/app.js?v=21"></script>
 <script>if('serviceWorker' in navigator) navigator.serviceWorker.register('/static/sw.js');</script>
 </body>
 </html>

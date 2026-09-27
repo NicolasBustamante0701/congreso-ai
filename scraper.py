@@ -13,6 +13,7 @@ import base64
 import logging
 import os
 import re
+import unicodedata
 import urllib.parse
 
 import httpx
@@ -414,17 +415,52 @@ async def _spley_proyectos(c, payload: dict, min_items: int = 1) -> list[dict]:
     return out
 
 
+# Palabras que no dicen nada del tema: con ellas como palabra clave, "ley de
+# salud" encontraba cualquier proyecto (todos dicen "LEY").
+_STOPWORDS_MATERIA = {
+    "LOS", "LAS", "DEL", "PARA", "POR", "CON", "SIN", "QUE", "UNA", "UNO", "UNOS",
+    "UNAS", "SOBRE", "ENTRE", "HACIA", "DESDE", "COMO", "MAS", "SUS", "ESTE", "ESTA",
+    "LEY", "LEYES", "PROYECTO", "PROYECTOS", "PROPOSICION", "PROPOSICIONES",
+    "LEGISLATIVA", "LEGISLATIVAS", "TEMA", "TEMAS", "MATERIA", "RELACIONADO",
+    "RELACIONADOS", "REFERIDO", "REFERIDOS", "CONGRESO", "PERU",
+}
+
+
+def _sin_acentos(texto: str) -> str:
+    return "".join(ch for ch in unicodedata.normalize("NFD", texto)
+                   if unicodedata.category(ch) != "Mn").upper()
+
+
+def _keywords_materia(materia: str) -> list[str]:
+    palabras = re.findall(r"\w+", _sin_acentos(materia or ""))
+    return [w for w in palabras if len(w) > 2 and w not in _STOPWORDS_MATERIA]
+
+
+def _coincide_materia(titulo: str, keywords: list[str]) -> bool:
+    """
+    True si TODAS las palabras clave aparecen como inicio de alguna palabra
+    del título ("MENTAL" encuentra "MENTALES" pero no "INSTRUMENTALIZACIÓN").
+
+    Antes era subcadena con ANY: "salud mental" traía el proyecto de crimen
+    organizado por "instruMENTALización", el de rocas "ornaMENTALes" y
+    cualquier proyecto con "SALUD" — y el modelo los presentaba como
+    proyectos de salud mental.
+    """
+    if not keywords:
+        return False
+    palabras = re.findall(r"\w+", _sin_acentos(titulo or ""))
+    return all(any(w.startswith(kw) for w in palabras) for kw in keywords)
+
+
 async def _fetch_spley_por_materia(materia: str, limit: int = 20):
     """
-    SPLEY's strBusqueda does NOT filter by topic — it ignores the keyword and
-    returns recent projects. For materia searches we fetch a large batch and
-    filter client-side by keyword in the title.
+    SPLEY ignora strBusqueda (devuelve los recientes igual), así que se traen
+    los ~300 proyectos más recientes y se filtra por título de este lado.
     """
-    keywords = [w.strip().upper() for w in materia.split() if len(w.strip()) > 2]
+    keywords = _keywords_materia(materia)
     if not keywords:
         return None
 
-    # Fetch up to 300 recent projects and filter locally.
     # min_items=300 fuerza a barrer todos los periodos: el actual todavía tiene
     # muy pocos proyectos y una búsqueda por materia sin el periodo anterior no
     # encontraría nada.
@@ -435,19 +471,35 @@ async def _fetch_spley_por_materia(materia: str, limit: int = 20):
         if not all_items:
             return None
     except Exception as _e:
-        logger.debug("scraper → None: %s", _e)
+        logger.warning("Búsqueda por materia %r falló: %s", materia, _e)
         return None
 
-    matches = [
-        p for p in all_items
-        if any(kw in (p.get("titulo") or "").upper() for kw in keywords)
-    ]
+    matches = [p for p in all_items if _coincide_materia(p.get("titulo"), keywords)]
+    criterio = (f"Títulos que contienen TODAS estas palabras: {', '.join(keywords)}. "
+                f"Revisados los {len(all_items)} proyectos más recientes de SPLEY; "
+                f"los más antiguos no se revisaron.")
+    # Una lista de sinónimos ("hospitales medicamentos medicos...") casi nunca
+    # aparece entera en un título. Ahí, y solo ahí, se acepta cualquiera de
+    # las palabras, avisándolo. Con una o dos palabras ("salud mental") no:
+    # traería todo lo de "salud" presentado como salud mental.
+    if not matches and len(keywords) >= 3:
+        matches = [p for p in all_items
+                   if any(_coincide_materia(p.get("titulo"), [kw]) for kw in keywords)]
+        criterio = (f"COINCIDENCIA PARCIAL: ningún título contiene todas las palabras; "
+                    f"se muestran los que contienen AL MENOS UNA de: {', '.join(keywords)}. "
+                    f"Revisados los {len(all_items)} proyectos más recientes de SPLEY. "
+                    f"Aclarale al usuario que es una coincidencia parcial.")
+    logger.info("Materia %r: %d de %d títulos coinciden", materia, len(matches), len(all_items))
 
     if not matches:
         return {"sin_datos": True,
-                "mensaje": f"No se encontraron proyectos sobre '{materia}' en el período actual."}
+                "criterio": criterio,
+                "mensaje": (f"Ningún título de los {len(all_items)} proyectos más recientes "
+                            f"trata sobre '{materia}'. No inventes proyectos: decile al "
+                            f"usuario que no se encontraron.")}
 
-    return _format_proyectos(matches[:limit], total_disponible=len(matches))
+    resultado = _format_proyectos(matches[:limit], total_disponible=len(matches))
+    return {"criterio": criterio, **resultado}
 
 
 async def fetch_proyectos(autor=None, comision=None, numero=None, materia=None,
@@ -498,6 +550,15 @@ async def fetch_proyectos(autor=None, comision=None, numero=None, materia=None,
                 if per_pedido is not None and p.get("_perPar") != per_pedido:
                     return False
                 return cam_pedida is None or p.get("_camara") == cam_pedida
+        elif materia and _keywords_materia(materia):
+            # Solo llega acá con `dias` (materia sola sale arriba). Antes el
+            # tema se descartaba en silencio y "salud de los últimos 15 días"
+            # devolvía los 15 días enteros: el modelo presentaba un proyecto
+            # de CTS como si fuera de salud.
+            kws = _keywords_materia(materia)
+
+            def filtro_local(p):
+                return _coincide_materia(p.get("titulo"), kws)
         elif autor:
             tokens = [t for t in re.split(r"\s+", autor.upper()) if len(t) > 2]
 
@@ -1128,6 +1189,7 @@ def _resolve_yt_info(video_id: str) -> dict:
         "quiet": True,
         "no_warnings": True,
         "skip_download": True,
+        "socket_timeout": 20,
         "format": "bestaudio[protocol=m3u8_native]/bestaudio[protocol=m3u8]/bestaudio/best",
         **_ydl_cookie_opts(),
     }
@@ -1221,8 +1283,13 @@ def transcribe_with_whisper(video_id: str, api_key: str, minutes: int = 10):
             return {"ok": False, "error": f"No se pudo capturar el audio del video. {stderr}"}
 
         size_mb = os.path.getsize(out_path) / 1_000_000
-        client = Groq(api_key=api_key)
-        with open(out_path, "rb") as f:
+        from config import WHISPER_TIMEOUT
+        from services.observability import timed
+
+        # Sin timeout el SDK espera 600s × 3 intentos: un Groq colgado dejaba
+        # el resumen de la sesión trabado media hora.
+        client = Groq(api_key=api_key, timeout=WHISPER_TIMEOUT, max_retries=1)
+        with open(out_path, "rb") as f, timed("Whisper", video=video_id, mb=f"{size_mb:.1f}"):
             tr = client.audio.transcriptions.create(
                 file=(os.path.basename(out_path), f.read()),
                 model="whisper-large-v3-turbo",

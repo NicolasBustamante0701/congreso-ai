@@ -19,68 +19,79 @@ reconocen los formatos de error de ambos.
 import asyncio
 import re
 
-from openai import OpenAI
+from openai import AsyncOpenAI, Timeout
 
-from config import LLM_API_KEY, LLM_BASE_URL, LLM_PROVIDER, MAIN_MODEL, logger
+from config import (
+    FIRST_TOKEN_TIMEOUT,
+    LLM_CONNECT_TIMEOUT,
+    LLM_FALLBACKS,
+    LLM_PROVIDER,
+    LLM_READ_TIMEOUT,
+    PROVIDERS,
+    ROUTER_TIMEOUT,
+    logger,
+)
+from services.observability import timed
 
 _PROVIDER_LABEL = LLM_PROVIDER.capitalize()
 
 RETRY_FALLBACK_SECONDS = 12.0
 MAX_ATTEMPTS = 3
 
-# Los modelos "flash" de Gemini piensan por default y, a través del shim de
-# OpenAI, ese razonamiento se cuela como texto normal en la respuesta (se ve
-# como el modelo "pensando en voz alta" antes de la respuesta real). Groq/
-# OpenAI no tienen este comportamiento con sus modelos actuales, así que el
-# parámetro solo se manda cuando el proveedor activo es Gemini.
-_EXTRA_PARAMS = {"reasoning_effort": "low"} if LLM_PROVIDER == "gemini" else {}
+# Con un proveedor de respaldo disponible no vale la pena dejar al usuario
+# mirando la pantalla un minuto por un rate limit: más que esto, se cambia.
+MAX_RATE_LIMIT_WAIT_WITH_FALLBACK = 8.0
+
+_TIMEOUT = Timeout(LLM_READ_TIMEOUT, connect=LLM_CONNECT_TIMEOUT)
 
 
-# Un solo cliente para todo el proceso. Antes se construía uno nuevo por turno
-# (ChatOrchestrator.__init__), y cada uno traía su propio pool de conexiones:
-# el pool que se calienta en un turno se tiraba junto con el cliente, así que
-# no había nada que reusar y precalentar era imposible. Con uno solo, la
-# conexión abierta en el arranque sirve para todos los turnos siguientes.
-_client_default: OpenAI | None = None
+def _label(provider: str) -> str:
+    return provider.capitalize()
 
 
-def get_client(api_key: str | None = None) -> OpenAI:
+def _extra_params(provider: str) -> dict:
+    # Los modelos "flash" de Gemini piensan por default y, a través del shim
+    # de OpenAI, ese razonamiento se cuela como texto normal en la respuesta.
+    return {"reasoning_effort": "low"} if provider == "gemini" else {}
+
+
+def model_for(provider: str, role: str) -> str:
+    return PROVIDERS[provider]["router_model" if role == "router" else "main_model"]
+
+
+def provider_chain() -> list[str]:
+    """Proveedor activo primero, después los de respaldo con key cargada."""
+    return [LLM_PROVIDER] + LLM_FALLBACKS
+
+
+# Un cliente por proveedor para todo el proceso, así se reusa el pool de
+# conexiones que abre warmup(). Async: el cliente síncrono bloqueaba el event
+# loop durante toda la generación y congelaba cualquier otro request. Sin
+# reintentos del SDK: los reintentos y el cambio de proveedor los hace
+# stream() acá abajo, con visibilidad para el usuario.
+_clients: dict[str, AsyncOpenAI] = {}
+
+
+def get_client(provider: str = LLM_PROVIDER) -> AsyncOpenAI:
+    if provider not in _clients:
+        cfg = PROVIDERS[provider]
+        _clients[provider] = AsyncOpenAI(api_key=cfg["api_key"], base_url=cfg["base_url"],
+                                         timeout=_TIMEOUT, max_retries=0)
+    return _clients[provider]
+
+
+async def warmup() -> None:
     """
-    Cliente del proveedor LLM activo. Sin argumento devuelve el compartido.
-
-    Con `api_key` explícita construye uno aparte — no se cachea, porque la key
-    es distinta de la del entorno.
-    """
-    if api_key:
-        return OpenAI(api_key=api_key, base_url=LLM_BASE_URL)
-
-    global _client_default
-    if _client_default is None:
-        _client_default = OpenAI(api_key=LLM_API_KEY, base_url=LLM_BASE_URL)
-    return _client_default
-
-
-def warmup() -> None:
-    """
-    Abre la conexión con el proveedor antes de que el usuario escriba.
-
-    La primera request de un proceso paga DNS + TCP + TLS: medido contra
-    Gemini, entre 1 y 3.5 segundos que se le cargaban enteros al primer
-    mensaje del usuario. Haciéndola en el arranque, ese costo se paga mientras
-    la ventana todavía está cargando y el primer mensaje sale ~1s más rápido.
-
-    Se usa models.list() a propósito: abre la misma conexión que después
-    reusan los pedidos de chat, pero no consume la cuota de generación (el
-    tier gratis de Gemini son 15 requests por minuto y hay que cuidarlos).
-
-    Falla en silencio: sin red, sin key o con el endpoint caído, la app tiene
-    que arrancar igual — esto es una optimización, no un requisito.
+    Abre la conexión con el proveedor antes de que el usuario escriba: la
+    primera request paga DNS + TCP + TLS (1-3.5s medido contra Gemini).
+    models.list() no consume cuota de generación. Falla en silencio: es una
+    optimización, no un requisito.
     """
     try:
-        get_client().models.list()
-        logger.info("Conexión con %s precalentada", _PROVIDER_LABEL)
-    except Exception as e:
-        logger.debug("Warmup de %s falló (no es grave): %s", _PROVIDER_LABEL, e)
+        with timed("LLM warmup", provider=LLM_PROVIDER):
+            await get_client().models.list()
+    except Exception:
+        pass
 
 
 # ── Clasificación de errores ─────────────────────────────────────────────────
@@ -109,6 +120,10 @@ def parse_retry_seconds(e) -> float:
 
 def is_rate_limit(e) -> bool:
     s = str(e).lower()
+    # Un 402 (cuenta sin saldo, ej. Cerebras) trae "quota" en el texto pero
+    # esperar no lo arregla: reintentar solo sumaba 24 s antes del error.
+    if "error code: 402" in s or "payment_required" in s:
+        return False
     return any(x in s for x in ("rate limit", "429", "tokens per", "quota", "per day",
                                  "resource_exhausted", "resource exhausted"))
 
@@ -152,17 +167,22 @@ def is_tool_format_error(e) -> bool:
     return "tool_use_failed" in s or "failed_generation" in s or "400" in s
 
 
-def friendly_error(e) -> str:
+def _es_cuota_diaria(e) -> bool:
+    s = str(e).lower()
+    return "per day" in s or "tpd" in s or "perday" in s
+
+
+def friendly_error(e, provider: str = LLM_PROVIDER) -> str:
     """Traduce la excepción a un mensaje que se le puede mostrar al usuario."""
     s = str(e).lower()
     if is_auth_error(e):
-        var = _ENV_KEY.get(LLM_PROVIDER, "la API key")
+        var = _ENV_KEY.get(provider, "la API key")
         return (
-            f"La API key de {_PROVIDER_LABEL} no es válida o falta. "
-            f"Revisá {var} en el archivo .env de la raíz del proyecto "
-            f"(hay una plantilla en .env.example) y reiniciá la app."
+            f"La API key de {_label(provider)} no es válida o falta. "
+            f"Abrí tu perfil (abajo a la izquierda) → Ajustes de IA y pegá una válida. "
+            f"Si corrés desde el código, también podés ponerla en {var} del archivo .env."
         )
-    if "per day" in s or "tpd" in s or "perday" in s:
+    if _es_cuota_diaria(e):
         m = re.search(r"try again in ([0-9hms.]+)", s)
         cuando = "en un rato"
         if m:
@@ -171,59 +191,114 @@ def friendly_error(e) -> str:
         return f"Llegamos al límite de tokens por ahora. Vuelve a intentar {cuando}."
     if is_rate_limit(e):
         return "Muchas consultas muy rápido. Espera unos segundos y vuelve a intentarlo."
+    if "timeout" in type(e).__name__.lower() or "timed out" in s:
+        return f"{_label(provider)} tardó demasiado en responder. Intentá de nuevo en un momento."
     return "Hubo un problema al conectar. Intentá de nuevo."
 
 
-# ── Streaming ────────────────────────────────────────────────────────────────
+# ── Llamadas ─────────────────────────────────────────────────────────────────
 
-async def stream_deltas(client, messages, *, model=MAIN_MODEL, max_tokens=2048,
-                        temperature=0.4):
-    """Itera los fragmentos de texto de una respuesta en streaming."""
-    stream = client.chat.completions.create(
-        model=model,
+async def complete_router(messages, *, tools, tool_choice="required", max_tokens=512,
+                          temperature=0.2):
+    """
+    Llamada sin streaming del router (Fase 1), con respaldo de proveedor.
+    Devuelve el choice. Un tool_call malformado se re-lanza sin probar otro
+    proveedor: el orquestador ya sabe responder sin herramientas.
+    """
+    last_exc = None
+    chain = provider_chain()
+    for i, provider in enumerate(chain):
+        model = model_for(provider, "router")
+        timeout = ROUTER_TIMEOUT if i < len(chain) - 1 else LLM_READ_TIMEOUT
+        try:
+            with timed("LLM router", provider=provider, model=model):
+                resp = await get_client(provider).chat.completions.create(
+                    model=model, messages=messages, tools=tools, tool_choice=tool_choice,
+                    max_tokens=max_tokens, temperature=temperature, stream=False,
+                    timeout=timeout,
+                )
+            return resp.choices[0]
+        except Exception as e:
+            last_exc = last_exc or e
+            if is_tool_format_error(e):
+                raise
+    # Se reporta el error del proveedor principal: es el que el usuario
+    # configuró, y el de un respaldo sin saldo confundiría más que ayudar.
+    raise last_exc
+
+
+async def _deltas(provider, messages, *, role, max_tokens, temperature):
+    stream = await get_client(provider).chat.completions.create(
+        model=model_for(provider, role),
         messages=messages,
         max_tokens=max_tokens,
         temperature=temperature,
         stream=True,
-        **_EXTRA_PARAMS,
+        **_extra_params(provider),
     )
-    for chunk in stream:
-        delta = chunk.choices[0].delta.content
-        if delta:
-            yield delta
+    try:
+        async for chunk in stream:
+            if not chunk.choices:
+                continue
+            if chunk.choices[0].finish_reason == "length":
+                logger.warning("Respuesta de %s cortada por max_tokens=%d", provider, max_tokens)
+            delta = chunk.choices[0].delta.content
+            if delta:
+                yield delta
+    finally:
+        await stream.close()
 
 
-async def stream_with_retry(client, messages, *, model=MAIN_MODEL, max_tokens=2048,
-                            temperature=0.4, on_retry=None):
+async def stream(messages, *, role="main", max_tokens=2048, temperature=0.4):
     """
-    Igual que stream_deltas pero reintenta ante rate limit, esperando el tiempo
-    exacto que indica el proveedor en el error.
+    Respuesta en streaming con reintento sobre rate limit y cambio de
+    proveedor si el activo falla, se cuelga o se queda sin cuota.
 
-    Emite tuplas ("text", delta) o ("status", mensaje). Si tras MAX_ATTEMPTS
-    sigue fallando, emite ("error", mensaje_amigable).
+    Emite tuplas ("text", delta), ("status", mensaje) o ("error", mensaje).
+    Solo se cambia de proveedor si todavía no salió texto: a mitad de una
+    respuesta, empezar otra de cero la duplicaría en pantalla.
     """
-    last_exc = None
-    for attempt in range(MAX_ATTEMPTS):
-        try:
-            async for delta in stream_deltas(client, messages, model=model,
-                                             max_tokens=max_tokens,
-                                             temperature=temperature):
-                yield ("text", delta)
-            return
-        except Exception as e:
-            last_exc = e
-            if is_rate_limit(e) and attempt < MAX_ATTEMPTS - 1:
-                wait = parse_retry_seconds(e)
-                logger.warning("%s rate limit (intento %d/%d), esperando %.1fs",
-                               _PROVIDER_LABEL, attempt + 1, MAX_ATTEMPTS, wait)
-                msg = f"Límite de {_PROVIDER_LABEL}, reintentando en {wait:.0f}s..."
-                if on_retry:
-                    on_retry(wait)
-                yield ("status", msg)
-                await asyncio.sleep(wait)
-            else:
+    chain = provider_chain()
+    primary_exc = None
+    for i, provider in enumerate(chain):
+        if i > 0:
+            yield ("status", f"{_label(chain[i - 1])} no respondió, probando con {_label(provider)}...")
+        hay_respaldo = i < len(chain) - 1
+        for attempt in range(MAX_ATTEMPTS):
+            emitted = False
+            deltas = _deltas(provider, messages, role=role,
+                             max_tokens=max_tokens, temperature=temperature)
+            try:
+                with timed("LLM stream", provider=provider, model=model_for(provider, role),
+                           intento=attempt + 1, max_tokens=max_tokens):
+                    try:
+                        first = await asyncio.wait_for(
+                            anext(deltas), FIRST_TOKEN_TIMEOUT if hay_respaldo else None)
+                    except StopAsyncIteration:
+                        return
+                    emitted = True
+                    yield ("text", first)
+                    async for delta in deltas:
+                        yield ("text", delta)
+                return
+            except Exception as e:
+                if provider == chain[0]:
+                    primary_exc = e
+                if emitted:
+                    logger.error("Stream de %s cortado a mitad de la respuesta: %s", provider, e)
+                    yield ("error", "La respuesta se cortó a mitad de camino. Intentá de nuevo.")
+                    return
+                if is_rate_limit(e) and not _es_cuota_diaria(e) and attempt < MAX_ATTEMPTS - 1:
+                    wait = parse_retry_seconds(e)
+                    if not hay_respaldo or wait <= MAX_RATE_LIMIT_WAIT_WITH_FALLBACK:
+                        logger.warning("%s rate limit (intento %d/%d), esperando %.1fs",
+                                       provider, attempt + 1, MAX_ATTEMPTS, wait)
+                        yield ("status", f"Límite de {_label(provider)}, reintentando en {wait:.0f}s...")
+                        await asyncio.sleep(wait)
+                        continue
                 break
+            finally:
+                await deltas.aclose()
 
-    if last_exc:
-        logger.error("%s stream falló definitivamente: %s", _PROVIDER_LABEL, last_exc)
-        yield ("error", friendly_error(last_exc))
+    logger.error("LLM falló en todos los proveedores (%s)", ", ".join(chain))
+    yield ("error", friendly_error(primary_exc, provider=chain[0]))

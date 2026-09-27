@@ -23,7 +23,7 @@ from services.prompt_registry import SYSTEM_MINI, resumen_con_fechas
 
 def make(messages, **kwargs):
     """Orquestador ya analizado, con un cliente falso."""
-    orch = ChatOrchestrator(messages, client=object())
+    orch = ChatOrchestrator(messages)
     orch._analyze()
     for k, v in kwargs.items():
         setattr(orch, k, v)
@@ -263,7 +263,9 @@ async def test_run_fuerza_buscar_proyectos_sin_pasar_por_router():
                        "y entrégame un cuadro resumen dividido por temas")])
     assert orch.forzar_dias_proyectos == 15
 
-    with patch.object(ChatOrchestrator, "_phase1", new=AsyncMock(side_effect=AssertionError("no debería llamarse"))), \
+    directo = SimpleNamespace(finish_reason="tool_calls", message=SimpleNamespace(
+        tool_calls=[tool_call("1", "responder_directo")]))
+    with patch.object(ChatOrchestrator, "_phase1", new=AsyncMock(return_value=directo)), \
          patch.object(ChatOrchestrator, "_run_tool", new=AsyncMock(return_value={"ok": True})) as mock_run_tool, \
          patch.object(ChatOrchestrator, "_stream_final") as mock_stream:
         async def fake_stream(*a, **k):
@@ -274,6 +276,21 @@ async def test_run_fuerza_buscar_proyectos_sin_pasar_por_router():
     assert events
     assert orch.tools_usados == ["buscar_proyectos"]
     mock_run_tool.assert_awaited_once_with("buscar_proyectos", {"dias": 15})
+
+
+async def test_proyectos_por_dias_conserva_el_tema_que_elige_el_router():
+    orch = make([user("proyectos de ley de salud de los ultimos 15 dias")])
+    choice = SimpleNamespace(finish_reason="tool_calls", message=SimpleNamespace(
+        tool_calls=[tool_call("1", "buscar_proyectos", {"materia": "salud", "limit": 100})]))
+    with patch.object(ChatOrchestrator, "_phase1", new=AsyncMock(return_value=choice)), \
+         patch.object(ChatOrchestrator, "_run_tool", new=AsyncMock(return_value={"ok": True})) as mock_run_tool, \
+         patch.object(ChatOrchestrator, "_stream_final") as mock_stream:
+        async def fake_stream(*a, **k):
+            yield "data: [DONE]\n\n"
+        mock_stream.side_effect = fake_stream
+        [ev async for ev in orch.run()]
+    # Tema del router + ventana del pedido + tope de listado suelto.
+    mock_run_tool.assert_awaited_once_with("buscar_proyectos", {"materia": "salud", "limit": 15, "dias": 15})
 
 
 # ── _deduplicar_tool_calls ─────────────────────────────────────────────────────
@@ -382,7 +399,7 @@ def test_phase3_responder_directo_usa_base():
 
 @pytest.mark.parametrize("tools,esperado", [
     (["fetch_expediente"],  4000),   # expedientes son largos
-    (["buscar_proyectos"],  1800),   # respuestas cortas, menos presión de TPM
+    (["buscar_proyectos"],  8000),   # 15 filas completas sin cortar la tabla
     ([],                    2500),   # conversación libre
 ])
 def test_phase3_max_tokens(tools, esperado):
@@ -404,3 +421,71 @@ def test_phase3_max_tokens_resumen_tiene_prioridad():
 
     assert resumen._phase3_max_tokens() == 3500
     assert resumen._phase3_max_tokens() != solo_expediente._phase3_max_tokens()
+
+
+async def test_una_excepcion_termina_en_error_legible_y_no_corta_el_stream():
+    orch = ChatOrchestrator([user("dame los proyectos del congreso sobre salud")])
+    with patch.object(ChatOrchestrator, "_analyze", side_effect=RuntimeError("boom")):
+        evs = [ev async for ev in orch.run()]
+    assert any('"error"' in ev for ev in evs)
+    assert evs[-1] == "data: [DONE]\n\n"
+
+
+async def test_herramienta_colgada_corta_por_timeout():
+    import asyncio
+
+    dormir_de_verdad = asyncio.sleep
+
+    async def colgada(args):
+        await dormir_de_verdad(10)
+
+    with patch.dict("services.orchestrator.TOOL_MAP", {"buscar_agenda": colgada}), \
+         patch("services.orchestrator.TOOL_TIMEOUT_SECONDS", 0.05), \
+         patch("services.orchestrator.asyncio.sleep", new=AsyncMock()):
+        result = await ChatOrchestrator._run_tool("buscar_agenda", {})
+    assert result["sin_datos"] is True
+
+
+def test_citas_no_verificadas_detecta_proyectos_y_links_inventados():
+    from services.orchestrator import _citas_no_verificadas
+
+    fuentes = ('{"numero": "00434-2026-2031-CD", "enlace": '
+               '"https://wb2server.congreso.gob.pe/spley-portal/#/diputados/expediente/2026/434"}')
+    respuesta = (
+        "- 434-2026-2031-CD, ver https://wb2server.congreso.gob.pe/spley-portal/#/diputados/expediente/2026/434.\n"
+        "- 00999-2026-2031-CD inventado, https://wb2server.congreso.gob.pe/spley-portal/#/diputados/expediente/2026/999\n"
+        "- fecha 26/09/2026 no es un proyecto"
+    )
+    nums, links = _citas_no_verificadas(respuesta, fuentes)
+    assert nums == ["00999-2026-2031-CD"]
+    assert links == ["https://wb2server.congreso.gob.pe/spley-portal/#/diputados/expediente/2026/999"]
+
+
+async def test_respuesta_con_proyecto_inventado_lleva_advertencia():
+    orch = ChatOrchestrator([user("hola")])
+
+    async def fake_stream(msgs, max_tokens):
+        yield ("text", "El proyecto 01234-2026-2031-CD trata de salud mental.")
+
+    with patch("services.orchestrator.llm.stream", fake_stream):
+        evs = [ev async for ev in orch._stream_final([{"role": "system", "content": "x"}], 100)]
+    texto = "".join(json.loads(e[6:]).get("text", "") for e in evs if e.startswith("data: {"))
+    assert "no pude verificar" in texto and "01234-2026-2031-CD" in texto
+
+
+async def test_datos_de_herramientas_van_antes_de_la_pregunta():
+    orch = ChatOrchestrator([user("hola"), assistant("Hola"), user("dame proyectos de salud")])
+    choice = SimpleNamespace(finish_reason="tool_calls", message=SimpleNamespace(
+        tool_calls=[SimpleNamespace(id="1", function=SimpleNamespace(
+            name="buscar_proyectos", arguments='{"materia": "salud"}'))]))
+    with patch.object(ChatOrchestrator, "_phase1", new=AsyncMock(return_value=choice)), \
+         patch.object(ChatOrchestrator, "_run_tool", new=AsyncMock(return_value={"items": []})), \
+         patch.object(ChatOrchestrator, "_stream_final") as mock_stream:
+        async def fake(msgs, max_tokens):
+            yield "data: [DONE]\n\n"
+        mock_stream.side_effect = fake
+        [ev async for ev in orch.run()]
+    msgs = mock_stream.call_args[0][0]
+    assert msgs[-1] == user("dame proyectos de salud")
+    assert msgs[-2]["content"].startswith("[Resultado de la herramienta buscar_proyectos]")
+    assert "el usuario no los envió" in msgs[-2]["content"]

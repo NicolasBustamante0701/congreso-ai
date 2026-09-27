@@ -190,6 +190,142 @@
     if (!profileMenuBtn.contains(e.target) && !profileMenu.contains(e.target)) closeProfileMenu();
   });
 
+  // ── Ajustes de IA (API key propia) ────────────────
+  // Solo dentro de Electron: la key la guarda el proceso principal, cifrada.
+  const aiApi       = window.electronAPI;
+  const aiModal     = document.getElementById('ai-modal');
+  const aiProvider  = document.getElementById('ai-provider');
+  const aiKey       = document.getElementById('ai-key');
+  const aiGroqKey   = document.getElementById('ai-groq-key');
+  const aiStatus    = document.getElementById('ai-status');
+  const aiMsg       = document.getElementById('ai-msg');
+  const aiSave      = document.getElementById('ai-save');
+  const aiClear     = document.getElementById('ai-clear');
+  const AI_NOMBRES  = { gemini: 'Gemini', groq: 'Groq', openai: 'OpenAI', cerebras: 'Cerebras' };
+  const AI_KEY_URLS = {
+    gemini:   'https://aistudio.google.com/app/apikey',
+    groq:     'https://console.groq.com/keys',
+    openai:   'https://platform.openai.com/api-keys',
+    cerebras: 'https://cloud.cerebras.ai',
+  };
+
+  function aiSetMsg(text, kind) {
+    aiMsg.textContent = text || '';
+    aiMsg.className = 'ai-msg' + (kind ? ' ' + kind : '');
+  }
+
+  async function aiRefresh() {
+    const [local, server] = await Promise.all([
+      aiApi.aiSettingsGet(),
+      fetch('/settings/ai').then(r => r.json()).catch(() => null),
+    ]);
+    if (local.provider) aiProvider.value = local.provider;
+    aiClear.style.display = local.hasKey ? '' : 'none';
+    aiKey.placeholder = local.hasKey ? `Guardada (termina en …${local.keyHint}). Pegá otra para cambiarla` : 'Pegá tu API key';
+    aiGroqKey.placeholder = local.hasGroqKey ? 'Guardada. Pegá otra para cambiarla' : 'Solo para la transcripción en vivo';
+
+    if (!server) {
+      aiStatus.textContent = 'No se pudo consultar el estado del servidor.';
+      aiStatus.className = 'ai-status bad';
+    } else if (!server.ready) {
+      aiStatus.textContent = 'Sin API key: el chat no va a funcionar hasta que pegues una.';
+      aiStatus.className = 'ai-status bad';
+    } else {
+      const origen = local.hasKey ? `tu key (…${local.keyHint})` : 'la key incluida en la app';
+      aiStatus.textContent = `Funcionando con ${AI_NOMBRES[server.provider] || server.provider}, usando ${origen}.`
+        + (server.transcripcion ? '' : ' Transcripción en vivo desactivada (falta key de Groq).');
+      aiStatus.className = 'ai-status ok';
+    }
+    return server;
+  }
+
+  async function openAiSettings() {
+    closeProfileMenu();
+    aiKey.value = '';
+    aiGroqKey.value = '';
+    aiSetMsg('');
+    aiModal.style.display = 'flex';
+    await aiRefresh();
+    aiKey.focus();
+  }
+  function closeAiSettings() { aiModal.style.display = 'none'; }
+
+  async function aiTest(provider, key) {
+    const r = await fetch('/settings/ai/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider, api_key: key }),
+    });
+    return r.json();
+  }
+
+  async function saveAiSettings() {
+    const provider = aiProvider.value;
+    const key = aiKey.value.trim();
+    const groqKey = aiGroqKey.value.trim();
+    const local = await aiApi.aiSettingsGet();
+    // Cambiar de proveedor exige la key de ese proveedor: la guardada es de otro.
+    if (!key && local.hasKey && local.provider !== provider) {
+      aiSetMsg(`Pegá una API key de ${AI_NOMBRES[provider]}.`, 'bad');
+      return;
+    }
+    if (!key && !groqKey) {
+      aiSetMsg('Pegá una API key.', 'bad');
+      return;
+    }
+    aiSave.disabled = true;
+    try {
+      if (key) {
+        aiSetMsg('Probando la key…');
+        const t = await aiTest(provider, key);
+        if (!t.ok) { aiSetMsg(t.error || 'La key no funcionó.', 'bad'); return; }
+      }
+      if (groqKey) {
+        aiSetMsg('Probando la key de Groq…');
+        const t = await aiTest('groq', groqKey);
+        if (!t.ok) { aiSetMsg('Key de Groq: ' + (t.error || 'no funcionó.'), 'bad'); return; }
+      }
+      aiSetMsg('Guardando y reiniciando el asistente…');
+      const res = await aiApi.aiSettingsSave({ provider, apiKey: key, groqKey });
+      if (!res.ok) { aiSetMsg(res.error || 'No se pudo guardar.', 'bad'); return; }
+      aiKey.value = '';
+      aiGroqKey.value = '';
+      await aiRefresh();
+      aiSetMsg('Listo. Ya podés usar el chat.', 'ok');
+    } catch (e) {
+      aiSetMsg('Error: ' + e.message, 'bad');
+    } finally {
+      aiSave.disabled = false;
+    }
+  }
+
+  if (aiApi && aiApi.aiSettingsGet) {
+    const aiBtn = document.getElementById('ai-settings-btn');
+    aiBtn.style.display = '';
+    aiBtn.addEventListener('click', openAiSettings);
+    document.getElementById('ai-modal-close').addEventListener('click', closeAiSettings);
+    aiModal.addEventListener('click', (e) => { if (e.target === aiModal) closeAiSettings(); });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && aiModal.style.display !== 'none') closeAiSettings();
+    });
+    aiSave.addEventListener('click', saveAiSettings);
+    aiKey.addEventListener('keydown', (e) => { if (e.key === 'Enter') saveAiSettings(); });
+    document.getElementById('ai-key-help').addEventListener('click', () => {
+      aiApi.openExternal(AI_KEY_URLS[aiProvider.value]);
+    });
+    aiClear.addEventListener('click', async () => {
+      aiClear.disabled = true;
+      aiSetMsg('Borrando tu key…');
+      await aiApi.aiSettingsClear();
+      aiClear.disabled = false;
+      const server = await aiRefresh();
+      aiSetMsg(server && server.ready ? 'Listo.' : 'La app no trae key propia: pegá una para usar el chat.',
+               server && server.ready ? 'ok' : 'bad');
+    });
+    // Primera vez sin ninguna key: abrir los ajustes directamente.
+    fetch('/settings/ai').then(r => r.json()).then(s => { if (!s.ready) openAiSettings(); }).catch(() => {});
+  }
+
   // ── DOM refs ─────────────────────────────────────
   const chatArea      = document.getElementById('chat-area');
   const msgInput      = document.getElementById('msg-input');

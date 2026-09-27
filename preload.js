@@ -7,4 +7,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openExternal:  (url)     => ipcRenderer.invoke('open-external', url),
   saveHistory:   (data)    => ipcRenderer.invoke('save-history',  data),
   loadHistory:   ()        => ipcRenderer.invoke('load-history'),
+  aiSettingsGet:   ()      => ipcRenderer.invoke('ai-settings-get'),
+  aiSettingsSave:  (s)     => ipcRenderer.invoke('ai-settings-save', s),
+  aiSettingsClear: ()      => ipcRenderer.invoke('ai-settings-clear'),
 });

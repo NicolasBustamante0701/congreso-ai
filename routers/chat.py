@@ -16,7 +16,10 @@ async def chat(request: Request):
 
     if not LLM_API_KEY:
         async def err():
-            yield sse.error(f"Falta la API key para el proveedor activo ({LLM_PROVIDER})")
+            yield sse.error(
+                f"No hay una API key de {LLM_PROVIDER.capitalize()} configurada. "
+                "Abrí tu perfil (abajo a la izquierda) → Ajustes de IA y pegá una."
+            )
         return StreamingResponse(err(), media_type="text/event-stream")
 
     orchestrator = ChatOrchestrator(messages)

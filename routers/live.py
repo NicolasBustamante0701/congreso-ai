@@ -4,7 +4,7 @@ import asyncio
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 
-from config import GROQ_API_KEY, MAIN_MODEL, logger, static_file
+from config import GROQ_API_KEY, logger, static_file
 from live_transcriber import stream_transcription
 from services import llm, sse
 from services.prompt_registry import LIVE_ANALYSIS_PROMPT
@@ -95,7 +95,7 @@ async def live_transcribe(request: Request,
                 if await request.is_disconnected():
                     break
         except Exception as e:
-            logger.error("live_transcribe falló para %s: %s", video_id, e)
+            logger.exception("live_transcribe falló para %s", video_id)
             yield sse.error(str(e))
         finally:
             if next_task is not None and not next_task.done():
@@ -136,16 +136,15 @@ async def live_analyze(request: Request):
             {"role": "system", "content": LIVE_ANALYSIS_PROMPT},
             {"role": "user", "content": f'Sesión: "{titulo}"\n\nTramo nuevo de la transcripción:\n{excerpt}'},
         ]
-        try:
-            async for delta in llm.stream_deltas(
-                llm.get_client(), messages,
-                model=MAIN_MODEL, max_tokens=400, temperature=0.3,
-            ):
-                yield sse.text(delta)
-            yield sse.DONE
-        except Exception as e:
-            logger.error("live_analyze falló: %s", e)
-            yield sse.error(llm.friendly_error(e))
+        async for kind, payload in llm.stream(messages, max_tokens=400, temperature=0.3):
+            if kind == "text":
+                yield sse.text(payload)
+            elif kind == "status":
+                yield sse.status(payload)
+            else:
+                yield sse.error(payload)
+                return
+        yield sse.DONE
 
     return StreamingResponse(generate(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache"})

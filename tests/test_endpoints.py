@@ -177,3 +177,29 @@ async def test_expediente_devuelve_error_si_el_scraper_revienta(client):
 
     assert r.status_code == 200
     assert "error" in r.json()
+
+
+async def test_settings_ai_informa_estado(client):
+    r = await client.get("/settings/ai")
+    assert r.status_code == 200
+    assert set(r.json()) == {"provider", "ready", "transcripcion"}
+
+
+async def test_settings_ai_test_rechaza_proveedor_o_key_vacios(client):
+    r = await client.post("/settings/ai/test", json={"provider": "inventado", "api_key": "x"})
+    assert r.json() == {"ok": False, "error": "Proveedor desconocido."}
+    r = await client.post("/settings/ai/test", json={"provider": "gemini", "api_key": "  "})
+    assert r.json()["ok"] is False
+
+
+async def test_settings_ai_test_traduce_key_invalida(client):
+    from unittest.mock import AsyncMock, patch
+
+    with patch("routers.settings.AsyncOpenAI") as cls:
+        inst = cls.return_value
+        inst.models.list = AsyncMock(side_effect=Exception(
+            "Error code: 400 - [{'error': {'message': 'Please pass a valid API key'}}]"))
+        inst.close = AsyncMock()
+        r = await client.post("/settings/ai/test", json={"provider": "gemini", "api_key": "mala"})
+    body = r.json()
+    assert body["ok"] is False and "no es válida para Gemini" in body["error"]

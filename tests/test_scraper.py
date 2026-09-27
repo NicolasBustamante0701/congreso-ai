@@ -56,3 +56,61 @@ def test_estado_legislativo_texto_en_receso():
     texto = estado_legislativo_texto(date(2027, 1, 15))
     assert "receso" in texto
     assert "01/03/2027" in texto
+
+
+# ── Búsqueda por materia (filtro local sobre títulos) ────────────────────────
+from scraper import _coincide_materia, _keywords_materia  # noqa: E402
+
+
+def test_materia_exige_palabras_completas_no_subcadenas():
+    kw = _keywords_materia("salud mental")
+    # Títulos reales que antes se colaban en "salud mental".
+    assert not _coincide_materia(
+        "PROPOSICIÓN LEGISLATIVA QUE FORTALECE LA LUCHA CONTRA EL CRIMEN ORGANIZADO E "
+        "INCORPORA LA VIGILANCIA AÉREA Y LA INSTRUMENTALIZACIÓN DE NAVES NO TRIPULADAS", kw)
+    assert not _coincide_materia(
+        "LEY DE PROMOCIÓN Y DESARROLLO SOSTENIBLE DE LAS ACTIVIDADES CON ROCAS ORNAMENTALES", kw)
+    assert not _coincide_materia(
+        "LEY QUE PROMUEVE LA SEGURIDAD DEL PACIENTE EN EL SECTOR SALUD", kw)
+    assert _coincide_materia("LEY QUE FORTALECE LA ATENCIÓN EN SALUD MENTAL COMUNITARIA", kw)
+    assert _coincide_materia("LEY DE SERVICIOS DE SALUD PARA TRASTORNOS MENTALES", kw)
+
+
+def test_materia_ignora_acentos_y_palabras_vacias():
+    assert _keywords_materia("proyectos de ley sobre educación") == ["EDUCACION"]
+    assert _coincide_materia("LEY QUE MEJORA LA EDUCACIÓN RURAL", _keywords_materia("educacion"))
+    assert _keywords_materia("ley de la") == []
+
+
+async def test_materia_con_dias_filtra_por_tema():
+    from datetime import datetime
+    from unittest.mock import AsyncMock, patch
+
+    import scraper
+
+    hoy = datetime.utcnow().strftime("%Y-%m-%dT00:00:00")
+    items = [
+        {"pleyNum": 438, "proyectoLey": "00438-2026-2031-CD", "fecPresentacion": hoy, "_perPar": 2026, "_camara": "D",
+         "titulo": "LEY QUE RECONOCE EL CESE IRREGULAR EN LA COMPENSACIÓN POR TIEMPO DE SERVICIOS"},
+        {"pleyNum": 412, "proyectoLey": "00412-2026-2031-CD", "fecPresentacion": hoy, "_perPar": 2026, "_camara": "D",
+         "titulo": "LEY QUE GARANTIZA LA OBSTETRICIA EN LOS ESTABLECIMIENTOS PÚBLICOS DE SALUD"},
+    ]
+    with patch.object(scraper, "_spley_proyectos", new=AsyncMock(return_value=items)):
+        r = await scraper.fetch_proyectos(materia="salud", dias=15)
+    assert [i["numero"] for i in r["items"]] == ["00412-2026-2031-CD"]
+
+
+async def test_lista_de_sinonimos_cae_a_coincidencia_parcial_avisada():
+    from unittest.mock import AsyncMock, patch
+
+    import scraper
+
+    items = [{"pleyNum": 1, "proyectoLey": "00001-2026-2031-CD", "_perPar": 2026, "_camara": "D",
+              "titulo": "LEY QUE GARANTIZA MEDICAMENTOS GENÉRICOS"}]
+    with patch.object(scraper, "_spley_proyectos", new=AsyncMock(return_value=items)):
+        r = await scraper._fetch_spley_por_materia("hospitales medicamentos cirugia")
+        assert r["criterio"].startswith("COINCIDENCIA PARCIAL")
+        assert len(r["items"]) == 1
+        # Con dos palabras no hay coincidencia parcial.
+        r2 = await scraper._fetch_spley_por_materia("salud medicamentos")
+        assert r2.get("sin_datos")
