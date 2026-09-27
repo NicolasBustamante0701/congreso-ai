@@ -275,7 +275,9 @@ def _fix_nombres_reformateados(texto: str, nombres_normalizados: set[str]) -> st
 # datos (pasó con proyectos "de salud mental" que no existían). La respuesta
 # ya salió en streaming, así que no se puede borrar: se agrega una advertencia
 # al final nombrando exactamente qué no se pudo verificar.
-NUM_PROYECTO_RE = re.compile(r"\b(\d{1,5})\s*[-/]\s*(\d{4})(?:\s*-\s*\d{4})?\s*-\s*([A-Z]{2})\b")
+# El guion entre los dos años es opcional: el Congreso a veces publica
+# "00088-20262031-CD" y el modelo lo escribe bien, "00088-2026-2031-CD".
+NUM_PROYECTO_RE = re.compile(r"\b(\d{1,5})\s*[-/]\s*(\d{4})(?:\s*-?\s*\d{4})?\s*-\s*([A-Z]{2})\b")
 LINK_CONGRESO_RE = re.compile(r"https?://[^\s)\]>\"'`]*congreso\.gob\.pe[^\s)\]>\"'`]*")
 
 
@@ -697,13 +699,13 @@ class ChatOrchestrator:
 
     def _phase3_max_tokens(self) -> int:
         if self.is_resumen:
-            # Reporte multi-tema con links — necesita más espacio que una
-            # respuesta de una sola herramienta. 5 tool results (RESUMEN_TOOLS),
-            # no 7-8: un poco más de margen que antes por la sección de
-            # interpelaciones que se sumó.
-            return 3500
+            # Reporte multi-tema con links y agenda. Con 3500 se cortaba a
+            # mitad de la agenda (visto 27/09/2026: terminaba en "**28/"):
+            # en Gemini el razonamiento interno también descuenta de acá.
+            # Es un techo, no un costo: solo se paga lo generado.
+            return 12000
         if "fetch_expediente" in self.tools_usados:
-            return 4000
+            return 8000
         if self.tools_usados:
             # Proyectos/agenda: respuesta más corta, menos presión sobre el TPM.
             #

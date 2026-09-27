@@ -227,7 +227,7 @@ async def complete_router(messages, *, tools, tool_choice="required", max_tokens
     raise last_exc
 
 
-async def _deltas(provider, messages, *, role, max_tokens, temperature):
+async def _deltas(provider, messages, *, role, max_tokens, temperature, meta=None):
     stream = await get_client(provider).chat.completions.create(
         model=model_for(provider, role),
         messages=messages,
@@ -242,6 +242,8 @@ async def _deltas(provider, messages, *, role, max_tokens, temperature):
                 continue
             if chunk.choices[0].finish_reason == "length":
                 logger.warning("Respuesta de %s cortada por max_tokens=%d", provider, max_tokens)
+                if meta is not None:
+                    meta["cortada"] = True
             delta = chunk.choices[0].delta.content
             if delta:
                 yield delta
@@ -266,8 +268,9 @@ async def stream(messages, *, role="main", max_tokens=2048, temperature=0.4):
         hay_respaldo = i < len(chain) - 1
         for attempt in range(MAX_ATTEMPTS):
             emitted = False
+            meta: dict = {}
             deltas = _deltas(provider, messages, role=role,
-                             max_tokens=max_tokens, temperature=temperature)
+                             max_tokens=max_tokens, temperature=temperature, meta=meta)
             try:
                 with timed("LLM stream", provider=provider, model=model_for(provider, role),
                            intento=attempt + 1, max_tokens=max_tokens):
@@ -280,6 +283,9 @@ async def stream(messages, *, role="main", max_tokens=2048, temperature=0.4):
                     yield ("text", first)
                     async for delta in deltas:
                         yield ("text", delta)
+                if meta.get("cortada"):
+                    yield ("text", "\n\n---\n**Ojo:** la respuesta se cortó por largo y puede estar "
+                                   "incompleta. Pedí la parte que falta (por ejemplo, \"seguí con la agenda\").")
                 return
             except Exception as e:
                 if provider == chain[0]:

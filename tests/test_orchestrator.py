@@ -398,7 +398,7 @@ def test_phase3_responder_directo_usa_base():
 # ── Fase 3: presupuesto de tokens ────────────────────────────────────────────
 
 @pytest.mark.parametrize("tools,esperado", [
-    (["fetch_expediente"],  4000),   # expedientes son largos
+    (["fetch_expediente"],  8000),   # expedientes son largos
     (["buscar_proyectos"],  8000),   # 15 filas completas sin cortar la tabla
     ([],                    2500),   # conversación libre
 ])
@@ -419,7 +419,7 @@ def test_phase3_max_tokens_resumen_tiene_prioridad():
                    tools_usados=["fetch_expediente"])
     solo_expediente = make([user("x")], tools_usados=["fetch_expediente"])
 
-    assert resumen._phase3_max_tokens() == 3500
+    assert resumen._phase3_max_tokens() == 12000
     assert resumen._phase3_max_tokens() != solo_expediente._phase3_max_tokens()
 
 
@@ -489,3 +489,11 @@ async def test_datos_de_herramientas_van_antes_de_la_pregunta():
     assert msgs[-1] == user("dame proyectos de salud")
     assert msgs[-2]["content"].startswith("[Resultado de la herramienta buscar_proyectos]")
     assert "el usuario no los envió" in msgs[-2]["content"]
+
+
+def test_citas_acepta_numero_publicado_sin_guion_entre_anios():
+    from services.orchestrator import _citas_no_verificadas
+
+    nums, _ = _citas_no_verificadas("Se sustenta el 00088-2026-2031-CD.",
+                                    "Sustentación de la Proposición Legislativa N° 00088-20262031-CD")
+    assert nums == []

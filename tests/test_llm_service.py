@@ -63,7 +63,7 @@ import pytest  # noqa: E402
 
 def _fake_deltas(comportamiento):
     """comportamiento[provider] = lista de deltas, o excepción a lanzar (tras deltas opcionales)."""
-    async def fake(provider, messages, *, role, max_tokens, temperature):
+    async def fake(provider, messages, *, role, max_tokens, temperature, meta=None):
         for item in comportamiento[provider]:
             if isinstance(item, Exception):
                 raise item
@@ -128,7 +128,7 @@ async def test_todos_fallan_reporta_el_error_del_principal(cadena, monkeypatch):
 async def test_primer_token_lento_pasa_al_respaldo(cadena, monkeypatch):
     import asyncio
 
-    async def fake(provider, messages, *, role, max_tokens, temperature):
+    async def fake(provider, messages, *, role, max_tokens, temperature, meta=None):
         if provider == "gemini":
             await asyncio.sleep(10)
         yield f"desde {provider}"
@@ -144,3 +144,13 @@ def test_cuenta_sin_saldo_no_es_rate_limit():
     err = ("Error code: 402 - {'message': 'Payment required to access this resource.', "
            "'type': 'payment_required_error', 'param': 'quota', 'code': 'payment_required'}")
     assert not llm.is_rate_limit(err)
+
+
+async def test_respuesta_cortada_por_largo_lo_avisa(cadena, monkeypatch):
+    async def fake(provider, messages, *, role, max_tokens, temperature, meta=None):
+        yield "- **28/"
+        meta["cortada"] = True
+
+    monkeypatch.setattr(llm, "_deltas", fake)
+    evs = await _recolectar()
+    assert "se cortó por largo" in evs[-1][1]
