@@ -56,3 +56,10 @@ def test_workflows_de_listados_siguen_pidiendo_tablas():
 def test_resumen_semanal_se_renderiza():
     r = resumen_con_fechas(HOY, DESDE)
     assert HOY in r and DESDE in r and "{" not in r.split("```")[0][:200]
+
+
+def test_prompts_de_sesion_saben_que_el_congreso_es_bicameral():
+    # Un informe real afirmó que "senadora" era un cargo inexistente.
+    for nombre in ("resumen_sesion.md", "session_qa.md"):
+        texto = (Path(PROMPTS_DIR) / nombre).read_text(encoding="utf-8")
+        assert "bicameral" in texto and "Senado" in texto, nombre

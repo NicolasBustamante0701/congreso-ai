@@ -27,6 +27,7 @@ from routers import (
     chat,
     expediente,
     export,
+    investigacion,
     live,
     pages,
     pdfs,
@@ -34,7 +35,7 @@ from routers import (
     settings,
     transcripts,
 )
-from services import llm
+from services import llm, seguimiento
 from services.observability import RequestContextMiddleware
 
 
@@ -45,8 +46,12 @@ async def lifespan(app: FastAPI):
     # En segundo plano: abrir la conexión tarda hasta 3.5s y el servidor tiene
     # que estar escuchando ya — Electron espera contra el puerto (ver main.js).
     warmup = asyncio.create_task(llm.warmup())
+    # Revisión periódica de los proyectos seguidos, solo mientras la app
+    # está abierta (ver services/seguimiento.py).
+    revision = asyncio.create_task(seguimiento.bucle_automatico())
     yield
     warmup.cancel()
+    revision.cancel()
     logger.info("Diana apagándose")
 
 
@@ -61,7 +66,7 @@ def create_app() -> FastAPI:
     app.add_middleware(RequestContextMiddleware)
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-    for module in (pages, chat, sesiones, live, transcripts, pdfs, export, expediente, settings):
+    for module in (pages, chat, sesiones, live, transcripts, investigacion, pdfs, export, expediente, settings):
         app.include_router(module.router)
 
     return app

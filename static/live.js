@@ -779,6 +779,29 @@ async function generarInforme() {
 }
 informeBtn.addEventListener("click", generarInforme);
 
+/* Desde la búsqueda de la app: abrir una sesión guardada en un segundo.
+   La transcripción y el reproductor cargan asíncronos, así que se reintenta
+   unos segundos hasta encontrar la línea y poder posicionar el video. */
+window.addEventListener("message", (e) => {
+  if (e.origin !== location.origin || e.data?.type !== "abrir-sesion") return;
+  const { video_id, titulo, en_vivo, start_s } = e.data;
+  if (currentVideoId !== video_id) selectVideo(video_id, titulo || video_id, en_vivo);
+  let intentos = 0;
+  const buscarLinea = () => {
+    const linea = linesEl.querySelector(`.lv-line[data-elapsed="${start_s}"]`);
+    if (linea) {
+      autoScroll = false;
+      linea.scrollIntoView({ block: "center" });
+      linea.classList.add("lv-line-buscada");
+      setTimeout(() => linea.classList.remove("lv-line-buscada"), 2600);
+    }
+    const listo = ytPlayer && typeof ytPlayer.seekTo === "function" && typeof ytPlayer.getPlayerState === "function";
+    if (listo && !currentIsLive) irAlSegundo(start_s);
+    if ((!linea || !listo) && ++intentos < 25) setTimeout(buscarLinea, 400);
+  };
+  buscarLinea();
+});
+
 /* ── Init ────────────────────────────────────────────── */
 loadVideos();
 cargarGuardadas();

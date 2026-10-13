@@ -70,7 +70,7 @@
   // ════════════════════════════════════════════════════════════════════════
   // Navegación entre vistas
   // ════════════════════════════════════════════════════════════════════════
-  const VISTAS = ['inicio', 'diana', 'agenda', 'sesiones', 'documentos', 'expediente', 'ajustes'];
+  const VISTAS = ['inicio', 'diana', 'agenda', 'sesiones', 'documentos', 'seguimiento', 'buscar', 'expediente', 'ajustes'];
   const FRAMES = { sesiones: ['live-iframe', '/live'], documentos: ['pdfs-iframe', '/pdfs'] };
   const alEntrar = {};       // vista → función que la refresca al mostrarse
   let vistaActual = null;
@@ -103,7 +103,7 @@
       if (necesitaCarga($(id))) $(id).src = src;
     }
     vistaActual = vista;
-    try { localStorage.setItem('diana_vista', vista === 'expediente' ? 'diana' : vista); } catch { /* sin storage */ }
+    try { localStorage.setItem('diana_vista', ['expediente', 'buscar'].includes(vista) ? 'inicio' : vista); } catch { /* sin storage */ }
     alEntrar[vista]?.();
     if (vista === 'diana' && !sinFoco) setTimeout(() => $('msg-input').focus(), 50);
   }
@@ -648,6 +648,14 @@
         : vacio('Ninguna sesión transcrita', 'Abrí Sesiones para transcribir una del canal del Congreso.');
     }).catch(() => { $('inicio-transcripciones').innerHTML = vacio('No se pudieron leer las transcripciones guardadas'); });
 
+    // Cambios en los proyectos seguidos
+    getJSON('/alertas?sin_leer=true').then(({ sin_leer }) => {
+      const box = $('inicio-alertas');
+      box.hidden = !sin_leer;
+      box.innerHTML = sin_leer ? `<div class="d-alert d-alert--info">Hay ${sin_leer} cambio${sin_leer === 1 ? '' : 's'} en proyectos que seguís.
+        <button class="d-btn d-btn--sm" data-goto="seguimiento" style="margin-left:auto">Ver cambios</button></div>` : '';
+    }).catch(() => {});
+
     // Datos del Congreso (agenda + proyectos)
     try {
       const d = await getJSON('/inicio');
@@ -900,6 +908,176 @@
   alEntrar.ajustes = () => { aiRefresh(); cargarDatosGuardados(); cargarDiagnostico(); };
 
   // ════════════════════════════════════════════════════════════════════════
+  // Búsqueda unificada (/buscar)
+  // ════════════════════════════════════════════════════════════════════════
+  let ultimaBusqueda = '';
+  async function buscar(q) {
+    ultimaBusqueda = q;
+    $('view-buscar').dataset.title = `Búsqueda: ${q}`;
+    irA('buscar');
+    $('buscar-titulo').textContent = `«${q}»`;
+    const cont = $('buscar-resultados');
+    cont.innerHTML = '<div class="d-card"><div class="lista-cargando"><span class="d-skeleton" style="width:70%"></span><span class="d-skeleton" style="width:50%"></span></div></div>';
+    let r;
+    try { r = await getJSON('/buscar?q=' + encodeURIComponent(q)); }
+    catch (e) { cont.innerHTML = `<div class="d-alert d-alert--danger">El servidor local no respondió: ${esc(e.message)}</div>`; return; }
+    if (q !== ultimaBusqueda) return;   // llegó otra búsqueda mientras tanto
+    const seguidos = new Set((await getJSON('/seguimiento').catch(() => ({ proyectos: [] }))).proyectos.map((p) => p.numero));
+    const bloque = (titulo, f, filas, vacioTxt) => {
+      if (!f) return '';
+      const sub = f.estado === 'ok' ? `${f.total} · ${esc(f.criterio || '')}` : '';
+      const cuerpo = f.estado !== 'ok'
+        ? `<div class="d-card-body"><div class="d-alert d-alert--danger">No se pudo consultar esta fuente (${esc(f.detalle || 'error')}). No significa que no haya resultados.</div></div>`
+        : f.items.length ? filas(f.items) : vacio('Sin coincidencias', vacioTxt);
+      return `<section class="d-card buscar-fuente"><div class="d-card-head"><h3 class="d-card-title">${titulo}</h3><span class="d-card-sub" title="${esc(f.criterio || '')}">${sub}</span></div><div class="lista">${cuerpo}</div></section>`;
+    };
+    const fp = r.fuentes.proyectos, ft = r.fuentes.transcripciones, fa = r.fuentes.agenda;
+    cont.innerHTML =
+      bloque('Proyectos de ley (SPLEY)', fp, (items) => items.map((p) => `
+        <div class="lista-item" role="group">
+          <span class="lista-num">${esc(p.numero)}</span>
+          <span class="lista-texto"><span class="t">${esc(p.titulo.charAt(0) + p.titulo.slice(1).toLowerCase())}</span>
+            <span class="m">${esc([p.camara, p.estado, p.fecha_presentacion].filter(Boolean).join(' · '))}</span></span>
+          <span class="lista-accion"><button class="d-btn d-btn--sm" data-expediente="${esc(p.numero)}">Abrir</button>
+            <button class="d-btn d-btn--sm" data-seguir="${esc(p.numero)}" ${seguidos.has(p.numero) ? 'disabled' : ''}>${seguidos.has(p.numero) ? '✓ Siguiendo' : 'Seguir'}</button></span>
+        </div>`).join(''), 'Ningún título de proyecto contiene todas esas palabras. Probá con menos palabras o un sinónimo.') +
+      bloque('Dicho en sesiones transcritas', ft, (items) => items.map((t) => `
+        <button class="lista-item" data-abrir-sesion="${esc(t.video_id)}" data-s="${t.start_s}" data-titulo="${esc(t.titulo)}" data-vivo="${t.en_vivo ? 1 : 0}">
+          <span class="lista-cuando">${esc(t.ts)}</span>
+          <span class="lista-texto"><span class="buscar-frag">${esc(t.fragmento).replace(/«/g, '<mark>').replace(/»/g, '</mark>')}</span>
+            <span class="m">${esc(t.titulo)}</span></span><span></span></button>`).join(''), 'No aparece en lo que transcribiste. Solo se busca en sesiones ya transcritas.') +
+      bloque('Agenda de los próximos 14 días', fa, (items) => items.map((s) => filaSesion({ ...s, dia: s.fecha })).join(''), 'Ninguna actividad publicada menciona esas palabras.');
+  }
+  $('buscar-preguntar').addEventListener('click', () => {
+    if (!ultimaBusqueda || streaming) return;
+    newChat();
+    send(`Investigá en las fuentes oficiales del Congreso: ${ultimaBusqueda}`);
+  });
+
+  // Abrir una sesión transcrita en el segundo exacto (vista Sesiones).
+  // Si el iframe todavía no cargó /live, se espera su `load`: justo después
+  // de asignar el src, el documento sigue siendo el about:blank anterior (que
+  // también dice readyState "complete") y un mensaje enviado ahí se perdía.
+  function abrirSesion(msg) {
+    const f = $('live-iframe');
+    const enviar = () => f.contentWindow.postMessage(msg, location.origin);
+    if (necesitaCarga(f)) {
+      f.addEventListener('load', () => setTimeout(enviar, 300), { once: true });
+      irA('sesiones');
+    } else {
+      irA('sesiones');
+      enviar();
+    }
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  // Seguimiento y alertas
+  // ════════════════════════════════════════════════════════════════════════
+  const TIPO_ALERTA = { estado: ['Estado', 'accent'], seguimiento: ['Trámite', 'info'], documento: ['Documento', 'warn'] };
+
+  async function refrescarBadge() {
+    try {
+      const { sin_leer } = await getJSON('/alertas?sin_leer=true');
+      const b = $('rail-badge');
+      b.hidden = !sin_leer;
+      b.textContent = sin_leer > 99 ? '99+' : String(sin_leer);
+      b.setAttribute('aria-label', `${sin_leer} cambios sin leer`);
+    } catch { /* el badge es opcional */ }
+  }
+
+  async function cargarSeguimiento() {
+    const lista = $('seg-lista'), alertasEl = $('alertas-lista');
+    try {
+      const [{ proyectos, revision_horas }, { alertas }] = await Promise.all([getJSON('/seguimiento'), getJSON('/alertas')]);
+      $('seg-explica').textContent = `Diana revisa estos expedientes en SPLEY cada ${revision_horas} h mientras la app está abierta, y cuando apretás "Revisar ahora". Solo avisa cambios documentados: estado, pasos nuevos del seguimiento o documentos nuevos. Con la app cerrada no se revisa nada.`;
+      lista.innerHTML = proyectos.length ? proyectos.map((p) => `
+        <div class="seg-item">
+          <div class="seg-item-top"><span class="lista-num">${esc(p.numero)}</span>${p.estado ? `<span class="d-badge">${esc(p.estado)}</span>` : ''}
+            ${p.sin_leer ? `<span class="d-badge d-badge--accent">${p.sin_leer} sin leer</span>` : ''}</div>
+          <div class="seg-item-tit">${esc(p.titulo.charAt(0) + p.titulo.slice(1).toLowerCase())}</div>
+          <div class="seg-item-meta">Revisado ${esc(p.ultima_revision || '—')}${p.ultimo_error ? ` · <span class="err">la última revisión falló (${esc(p.ultimo_error)})</span>` : ''}</div>
+          <div class="seg-item-acc"><button class="d-btn d-btn--sm" data-expediente="${esc(p.numero)}">Abrir expediente</button>
+            <button class="d-btn d-btn--sm" data-revisar="${esc(p.numero)}">Revisar</button>
+            <button class="d-btn d-btn--sm d-btn--ghost d-btn--danger" data-dejar="${esc(p.numero)}">Dejar de seguir</button></div>
+        </div>`).join('')
+        : vacio('No seguís ningún proyecto', 'Agregá uno por su número, o tocá "Seguir" en un expediente o en la búsqueda.');
+      alertasEl.innerHTML = alertas.length ? alertas.map((a) => {
+        const [t, tono] = TIPO_ALERTA[a.tipo] || [a.tipo, 'info'];
+        return `<div class="alerta${a.leida ? '' : ' is-nueva'}">
+          <span class="alerta-tipo d-badge d-badge--${tono}">${esc(t)}</span>
+          <div class="alerta-texto"><strong>${esc(a.numero)}</strong> — ${esc(a.detalle)}</div>
+          <div class="alerta-meta"><span>Detectado ${esc(a.creada)}</span>
+            <button class="link-btn" data-expediente="${esc(a.numero)}">Abrir expediente</button>
+            ${a.enlace ? `<a href="${esc(a.enlace)}">Ver en SPLEY</a>` : ''}</div></div>`;
+      }).join('')
+        : vacio('Sin cambios detectados', proyectos.length ? 'Todavía no cambió nada en lo que seguís desde que lo agregaste.' : '');
+    } catch (e) {
+      lista.innerHTML = alertasEl.innerHTML = `<div class="d-card-body"><div class="d-alert d-alert--danger">No se pudo leer el seguimiento: ${esc(e.message)}</div></div>`;
+    }
+    refrescarBadge();
+  }
+  alEntrar.seguimiento = cargarSeguimiento;
+
+  async function seguirProyecto(numero, btn) {
+    if (btn) { btn.disabled = true; btn.textContent = 'Agregando…'; }
+    try {
+      const r = await fetch('/seguimiento', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ numero }) });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`);
+      if (btn) btn.textContent = '✓ Siguiendo';
+      return d;
+    } catch (e) {
+      if (btn) { btn.disabled = false; btn.textContent = 'Seguir'; }
+      throw e;
+    }
+  }
+  $('seg-agregar').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const inp = $('seg-numero'), msg = $('seg-msg');
+    const n = inp.value.trim();
+    if (!n) return;
+    msg.textContent = 'Consultando el expediente en SPLEY…'; msg.className = 'ai-msg';
+    try {
+      const d = await seguirProyecto(n);
+      inp.value = '';
+      msg.textContent = `Listo: seguís ${d.proyecto.numero} (${d.proyecto.estado || 'sin estado'}).`; msg.className = 'ai-msg ok';
+      cargarSeguimiento();
+    } catch (err) { msg.textContent = err.message; msg.className = 'ai-msg bad'; }
+  });
+  $('seg-revisar').addEventListener('click', async (e) => {
+    const b = e.currentTarget; b.disabled = true; b.textContent = 'Revisando…';
+    try {
+      const r = await getJSON('/seguimiento/revisar', { method: 'POST' });
+      b.textContent = r.en_curso ? 'Ya había una revisión en curso' : `${r.nuevas} cambio(s) nuevo(s)${r.fallas.length ? ` · ${r.fallas.length} sin respuesta` : ''}`;
+    } catch (err) { b.textContent = 'Falló: ' + err.message; }
+    setTimeout(() => { b.disabled = false; b.textContent = 'Revisar ahora'; }, 3500);
+    cargarSeguimiento();
+  });
+  $('alertas-leidas').addEventListener('click', async () => {
+    await fetch('/alertas/leidas', { method: 'POST' }).catch(() => {});
+    cargarSeguimiento();
+  });
+  document.addEventListener('click', async (e) => {
+    const s = e.target.closest('[data-seguir]');
+    if (s) { seguirProyecto(s.dataset.seguir, s).then(refrescarBadge).catch((err) => alert(err.message)); return; }
+    const rv = e.target.closest('[data-revisar]');
+    if (rv) {
+      rv.disabled = true; rv.textContent = 'Revisando…';
+      await fetch('/seguimiento/revisar?numero=' + encodeURIComponent(rv.dataset.revisar), { method: 'POST' }).catch(() => {});
+      cargarSeguimiento(); return;
+    }
+    const dj = e.target.closest('[data-dejar]');
+    if (dj && confirm(`¿Dejar de seguir ${dj.dataset.dejar}? Se borran sus alertas.`)) {
+      await fetch('/seguimiento/' + encodeURIComponent(dj.dataset.dejar), { method: 'DELETE' }).catch(() => {});
+      cargarSeguimiento(); return;
+    }
+    const ses = e.target.closest('[data-abrir-sesion]');
+    if (ses) abrirSesion({ type: 'abrir-sesion', video_id: ses.dataset.abrirSesion, titulo: ses.dataset.titulo,
+                           en_vivo: ses.dataset.vivo === '1', start_s: Number(ses.dataset.s) });
+  });
+  setInterval(refrescarBadge, 5 * 60 * 1000);
+
+  // ════════════════════════════════════════════════════════════════════════
   // Expediente y vistas embebidas
   // ════════════════════════════════════════════════════════════════════════
   function abrirExpediente(numero) {
@@ -941,6 +1119,7 @@
       return;
     }
     if (d?.type === 'open-external') { api?.openExternal(d.url); return; }
+    if (d?.type === 'seguimiento-cambio') { refrescarBadge(); return; }
     // Puente de exportación: los iframes no tienen electronAPI.
     const responder = (ok, err) => e.source.postMessage(ok ? { type: 'export-done', reqId: d.reqId } : { type: 'export-error', reqId: d.reqId, message: String(err) }, location.origin);
     if (d?.type === 'export-pdf') {
@@ -963,14 +1142,13 @@
     inp.value = ''; inp.blur();
     // Un número de proyecto abre directo su expediente.
     if (RE_NUM_PROYECTO.test(q)) { abrirExpediente(q.toUpperCase()); return; }
-    newChat();
-    send(`Buscá en las fuentes oficiales del Congreso: ${q}`);
+    buscar(q);
   });
   document.addEventListener('keydown', (e) => {
     const mod = e.metaKey || e.ctrlKey;
     if (mod && e.key.toLowerCase() === 'k') { e.preventDefault(); $('global-search-input').focus(); }
     if (mod && e.key.toLowerCase() === 'n') { e.preventDefault(); if (!streaming) { newChat(); irA('diana'); } }
-    if (mod && /^[1-6]$/.test(e.key)) { e.preventDefault(); irA(['inicio', 'diana', 'agenda', 'sesiones', 'documentos', 'ajustes'][+e.key - 1]); }
+    if (mod && /^[1-7]$/.test(e.key)) { e.preventDefault(); irA(['inicio', 'diana', 'agenda', 'sesiones', 'documentos', 'seguimiento', 'ajustes'][+e.key - 1]); }
     if (e.key === 'Escape' && !resumenModal.hidden) resumenModal.hidden = true;
   });
 
@@ -990,6 +1168,7 @@
     convs.sort((a, b) => (b.ts || 0) - (a.ts || 0));
     renderConvs();
     renderMessages();
+    refrescarBadge();
 
     const estado = await refrescarEstado();
     // Sin key, lo primero es configurarla: Diana no puede responder.

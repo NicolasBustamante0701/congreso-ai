@@ -209,6 +209,7 @@
       else portal.style.display = 'none';
 
       pintarChips();
+      prepararSeguir(d.numero || numero);
     } catch (e) {
       errorFicha('No se pudo cargar el expediente',
                  `Falló la consulta a SPLEY: ${e.message}`);
@@ -310,6 +311,32 @@
       $('exp-send').disabled = false;
       abajo();
     }
+  }
+
+  // ── Seguir el proyecto (ver services/seguimiento.py) ──
+  async function prepararSeguir(num) {
+    const btn = $('exp-seguir');
+    let siguiendo = false;
+    const pintar = () => {
+      btn.textContent = siguiendo ? '✓ Siguiendo' : 'Seguir';
+      btn.classList.toggle('is-on', siguiendo);
+    };
+    try {
+      const { proyectos } = await (await fetch('/seguimiento')).json();
+      siguiendo = proyectos.some((p) => p.numero === num);
+    } catch { return; }   // sin backend de seguimiento: no se ofrece
+    btn.hidden = false;
+    pintar();
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      try {
+        const r = siguiendo
+          ? await fetch(`/seguimiento/${encodeURIComponent(num)}`, { method: 'DELETE' })
+          : await fetch('/seguimiento', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ numero: num }) });
+        if (r.ok) siguiendo = !siguiendo;
+        window.parent.postMessage({ type: 'seguimiento-cambio' }, location.origin);
+      } finally { btn.disabled = false; pintar(); }
+    });
   }
 
   // ── Eventos ───────────────────────────────────────

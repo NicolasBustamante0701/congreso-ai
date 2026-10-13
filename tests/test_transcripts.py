@@ -11,6 +11,7 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
+from services import db
 from services import transcripts as tr
 
 VID = "abc123"
@@ -18,7 +19,7 @@ VID = "abc123"
 
 @pytest.fixture(autouse=True)
 def db_temporal(tmp_path, monkeypatch):
-    monkeypatch.setattr(tr, "DB_PATH", tmp_path / "diana.db")
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "diana.db")
 
 
 def _cargar(textos, vid=VID, en_vivo=False):

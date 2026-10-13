@@ -38,6 +38,7 @@ a = Analysis(
         'routers.sesiones',
         'routers.settings',
         'routers.transcripts',
+        'routers.investigacion',
         'services',
         'services.docx',
         'services.llm',
@@ -49,6 +50,9 @@ a = Analysis(
         'services.tools',
         'services.tool_cache',
         'services.transcripts',
+        'services.db',
+        'services.seguimiento',
+        'services.busqueda',
         'sqlite3',
         'openai',
         # ffmpeg_exe() lo importa dentro de la función, así que PyInstaller no

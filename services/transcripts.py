@@ -26,55 +26,9 @@ una sesión alcanza con encontrar los tramos donde aparecen las palabras; si
 eso no recupera bien en la práctica, ahí se evalúa otra cosa.
 """
 import re
-import sqlite3
-from contextlib import contextmanager
 
-import config
-from config import ahora_lima, logger
-
-DB_PATH = config.DB_FILE
-VERSION_ESQUEMA = 1
-
-_MIGRACIONES = {
-    1: """
-        CREATE TABLE sesion (
-            video_id   TEXT PRIMARY KEY,
-            titulo     TEXT NOT NULL DEFAULT '',
-            url        TEXT NOT NULL DEFAULT '',
-            en_vivo    INTEGER NOT NULL DEFAULT 0,
-            estado     TEXT NOT NULL DEFAULT 'en_curso',
-            creado     TEXT NOT NULL,
-            actualizado TEXT NOT NULL,
-            informe    TEXT,
-            informe_generado TEXT
-        );
-        CREATE TABLE ventana (
-            id       INTEGER PRIMARY KEY,
-            video_id TEXT NOT NULL REFERENCES sesion(video_id) ON DELETE CASCADE,
-            start_s  INTEGER NOT NULL,
-            end_s    INTEGER NOT NULL,
-            texto    TEXT NOT NULL DEFAULT '',
-            estado   TEXT NOT NULL,
-            UNIQUE (video_id, start_s)
-        );
-        CREATE INDEX ventana_video ON ventana(video_id, start_s);
-        CREATE VIRTUAL TABLE ventana_fts USING fts5(
-            texto, content='ventana', content_rowid='id',
-            tokenize='unicode61 remove_diacritics 2'
-        );
-        CREATE TRIGGER ventana_ai AFTER INSERT ON ventana BEGIN
-            INSERT INTO ventana_fts(rowid, texto) VALUES (new.id, new.texto);
-        END;
-        CREATE TRIGGER ventana_ad AFTER DELETE ON ventana BEGIN
-            INSERT INTO ventana_fts(ventana_fts, rowid, texto) VALUES ('delete', old.id, old.texto);
-        END;
-        CREATE TRIGGER ventana_au AFTER UPDATE ON ventana BEGIN
-            INSERT INTO ventana_fts(ventana_fts, rowid, texto) VALUES ('delete', old.id, old.texto);
-            INSERT INTO ventana_fts(rowid, texto) VALUES (new.id, new.texto);
-        END;
-    """,
-}
-
+from config import ahora_lima
+from services import db
 
 # ── Tiempos ──────────────────────────────────────────────────────────────────
 
@@ -107,34 +61,9 @@ def rango_en_pregunta(pregunta: str):
     return (a, b) if a <= b else (b, a)
 
 
-# ── Conexión y esquema ───────────────────────────────────────────────────────
-
-@contextmanager
-def _db():
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    con = sqlite3.connect(DB_PATH, timeout=5)
-    con.row_factory = sqlite3.Row
-    try:
-        con.execute("PRAGMA foreign_keys = ON")
-        _migrar(con)
-        yield con
-        con.commit()
-    except Exception:
-        con.rollback()
-        raise
-    finally:
-        con.close()
-
-
-def _migrar(con):
-    actual = con.execute("PRAGMA user_version").fetchone()[0]
-    if actual >= VERSION_ESQUEMA:
-        return
-    con.execute("PRAGMA journal_mode = WAL")
-    for v in range(actual + 1, VERSION_ESQUEMA + 1):
-        con.executescript(_MIGRACIONES[v])
-        con.execute(f"PRAGMA user_version = {v}")
-        logger.info("diana.db migrada a la versión %d", v)
+# ── Conexión ─────────────────────────────────────────────────────────────────
+# Esquema y migraciones en services/db.py (los comparte con el seguimiento).
+_db = db.conexion
 
 
 def _ahora() -> str:

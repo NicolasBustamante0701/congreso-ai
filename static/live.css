@@ -1,6 +1,6 @@
 *, *::before, *::after { margin: 0; padding: 0; }
 
-:root { --sidebar-w: 260px; }   /* colores y fuente: tokens.css */
+:root { --sidebar-w: 236px; }   /* colores y fuente: tokens.css */
 
 .lv-scroll-btn { background: var(--d-text); color: var(--d-surface); }
 .lv-head-btn--pdf, .lv-head-btn--word { border-color: var(--d-line-strong); }
@@ -462,9 +462,9 @@ html, body { height: 100%; background: var(--d-bg); overflow: hidden; }
 .lv-ia-nota { font-weight: 500; color: var(--dim); margin-left: auto; }
 
 /* ── Preguntas sobre la sesión ───────────────────────── */
-.lv-qa { display: flex; gap: 6px; padding: 8px 10px; border-top: 1px solid var(--border); flex-shrink: 0; background: var(--bg); }
+.lv-qa { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 10px; border-top: 1px solid var(--border); flex-shrink: 0; background: var(--bg); }
 .lv-qa input {
-  flex: 1; min-width: 0; padding: 7px 10px; font: 12.5px var(--font); color: var(--text);
+  flex: 1 1 100%; min-width: 0; padding: 7px 10px; font: 12.5px var(--font); color: var(--text);
   background: var(--bg-off); border: 1px solid var(--border); border-radius: 7px; outline: none;
 }
 .lv-qa input:focus { border-color: var(--accent); }
@@ -475,3 +475,7 @@ html, body { height: 100%; background: var(--d-bg); overflow: hidden; }
 .lv-qa-btn--alt { color: var(--text); background: transparent; border-color: var(--border); }
 .lv-qa-btn:disabled { opacity: 0.5; cursor: default; }
 @media (prefers-reduced-motion: reduce) { .lv-qa-btn, .lv-ts-link { transition: none; } }
+
+.lv-line-buscada { background: var(--d-accent-soft); border-radius: 6px; transition: background .6s; }
+
+.lv-qa .lv-qa-btn { flex: 1; }
