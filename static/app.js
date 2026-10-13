@@ -564,10 +564,15 @@
         data = await r.json();
       }
       if (!data.ok) throw new Error(data.error || 'No se pudo leer el PDF');
-      conv.messages.push({ role: 'user', content: `He cargado el documento "${titulo}" (${data.pages} páginas).\n\nContenido:\n${data.text}\n\n¿Qué quieres analizar?` });
+      // [documento_id: …] le permite al servidor buscar en TODAS las páginas
+      // (services/documentos.py), no solo en el comienzo que entra acá.
+      const ref = data.doc_id ? `\n[documento_id: ${data.doc_id}]` : '';
+      conv.messages.push({ role: 'user', content: `He cargado el documento "${titulo}" (${data.pages} páginas).${ref}\n\nContenido:\n${data.text}\n\n¿Qué quieres analizar?` });
       const aviso = /Páginas sin texto extraíble/.test(data.text)
         ? '\n\n_Ojo: algunas páginas no tienen texto extraíble (probablemente escaneadas) y su contenido no está disponible._' : '';
-      const recorte = /Texto recortado/.test(data.text) ? '\n\n_El documento es largo: se leyó solo una parte (te digo hasta qué página si preguntás)._' : '';
+      const recorte = /Texto recortado/.test(data.text)
+        ? (data.doc_id ? '\n\n_Es largo: para cada pregunta busco en las páginas que correspondan, no solo en el comienzo._'
+                       : '\n\n_El documento es largo: se leyó solo una parte (te digo hasta qué página si preguntás)._') : '';
       const msg = `Listo, leí **${esc(titulo.slice(0, 80))}** (${data.pages} págs.). Preguntame lo que necesites: cito la página de donde sale cada dato.${aviso}${recorte}`;
       conv.messages.push({ role: 'assistant', content: msg });
       saveConvs(); renderConvs();

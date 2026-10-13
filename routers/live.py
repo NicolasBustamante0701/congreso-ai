@@ -5,7 +5,7 @@ from fastapi import APIRouter, Query, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 
 from config import GROQ_API_KEY, logger, static_file
-from live_transcriber import stream_transcription
+from live_transcriber import _merge_overlap, stream_transcription
 from services import llm, sse, transcripts
 from services.prompt_registry import LIVE_ANALYSIS_PROMPT
 
@@ -55,6 +55,20 @@ async def live_transcribe(request: Request,
 
         v = item.pop("ventana", None)
         off = estado["offset"]
+        if off and "text" in item and not estado.get("empalmado"):
+            # Primera línea tras una reconexión en vivo: ffmpeg vuelve a
+            # entrar por el borde en vivo y puede repetir lo último que ya se
+            # guardó (visto en una prueba real). Se recorta contra eso.
+            estado["empalmado"] = True
+            previa = transcripts.ultimo_texto(video_id)
+            if previa:
+                item["text"] = _merge_overlap(previa, item["text"])
+                if not item["text"].strip():
+                    item.pop("text")
+                    item.pop("timestamp", None)
+                    item.pop("elapsed", None)
+                    if v is not None:
+                        v["estado"] = "silencio"
         if v is not None and estado["persistir"]:
             try:
                 transcripts.guardar_ventana(video_id, v["start_s"] + off, v["end_s"] + off,

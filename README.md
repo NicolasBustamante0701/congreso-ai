@@ -15,7 +15,9 @@ Asistente de investigación parlamentaria del Perú. App de escritorio
 - **Sesiones**: transcripción de videos del canal del Congreso (Groq
   Whisper), guardada al vuelo; preguntas con marcas de tiempo `[HH:MM:SS]`
   que llevan al segundo del video, e informe final.
-- **Documentos**: PDFs oficiales; Diana los lee citando la página.
+- **Documentos**: PDFs oficiales o propios. Se guardan completos por página:
+  para cada pregunta Diana recibe las páginas que corresponden (artículo
+  exacto o búsqueda por palabras) y cita la página física.
 - **Seguimiento**: proyectos seguidos por número, con alertas cuando cambia
   el estado, aparece un paso nuevo o un documento nuevo.
 - **Búsqueda** (⌘K): SPLEY, lo dicho en sesiones transcritas y la agenda, en
@@ -124,7 +126,10 @@ consultados al proveedor de IA elegido; el audio de las sesiones (tramos de
 
 - Transcripción automática: no es un acta oficial; nombres y cifras pueden
   salir mal reconocidos. No hay diarización (no se identifica quién habla).
-- En un stream **en vivo** los tiempos son de captura, no del video.
+- En un stream **en vivo** los tiempos son de captura, no del video, y al
+  reconectar puede repetirse o perderse un tramo corto (ffmpeg vuelve a
+  entrar por el borde en vivo; la primera línea se recorta contra la última
+  guardada).
 - El seguimiento y la revisión automática (cada 3 h) solo corren con la app
   abierta.
 - La búsqueda es por coincidencia de palabras (título en SPLEY, BM25 en

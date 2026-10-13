@@ -20,7 +20,7 @@ from types import SimpleNamespace
 
 from config import ahora_lima, logger
 from scraper import fetch_transcript_youtube
-from services import llm, sse, tool_cache
+from services import documentos, llm, sse, tool_cache
 from services.observability import timed
 from services.prompt_registry import (
     ROUTER_PROMPT,
@@ -32,6 +32,8 @@ from services.prompt_registry import (
     system_con_fecha,
 )
 from services.tools import STATUS_LABELS, TOOL_MAP, TOOLS
+
+DOC_ID_RE = re.compile(r"\[documento_id: ([0-9a-f]{12})\]")
 
 # Un tool result de 7k chars ≈ 2000 tokens. Más que eso dispara el TPM.
 MAX_TOOL_RESULT_CHARS = 7000
@@ -390,6 +392,11 @@ class ChatOrchestrator:
             "He cargado el documento" in (m.get("content", "") or "")
             for m in recientes if m.get("role") == "user"
         )
+        # Páginas del documento completo que responden a esta pregunta (el
+        # contexto inicial solo trae el comienzo de un PDF largo).
+        self.paginas_doc = None
+        if self.doc_en_contexto:
+            self.paginas_doc = self._paginas_del_documento(recientes)
         pide_analisis = any(w in low_last for w in PALABRAS_ANALISIS)
         # Analizar un doc ya cargado se resuelve con el texto en contexto:
         # no hace falta ninguna herramienta de scraping.
@@ -433,6 +440,34 @@ class ChatOrchestrator:
         else:
             self.conversation = msgs[-20:]
 
+    def _paginas_del_documento(self, recientes: list) -> dict | None:
+        m = None
+        for msg in reversed(recientes):
+            if msg.get("role") == "user":
+                m = DOC_ID_RE.search(msg.get("content", "") or "")
+                if m:
+                    break
+        if not m:
+            return None
+        try:
+            paginas = documentos.paginas_relevantes(m.group(1), self.last_msg)
+        except Exception as e:
+            logger.warning("no se pudieron recuperar páginas del documento %s: %s", m.group(1), e)
+            return None
+        if not paginas:
+            return None
+        texto = "\n\n".join(f"[Página {n}]\n{t}" for n, t in paginas)
+        return {"role": "user", "content": (
+            "[Páginas del documento cargado que corresponden a la próxima pregunta — texto "
+            "completo de esas páginas, con su número de página física. Respondé con esto y "
+            "citá las páginas.]\n" + texto)}
+
+    def _con_paginas(self, msgs: list) -> list:
+        """Inserta las páginas recuperadas justo antes de la última pregunta."""
+        if not self.paginas_doc or not msgs:
+            return msgs
+        return msgs[:-1] + [self.paginas_doc] + msgs[-1:]
+
     @property
     def _short_circuit(self) -> bool:
         """Analizar doc o sesión no requiere Fase 1 ni 2."""
@@ -455,7 +490,7 @@ class ChatOrchestrator:
             if not ok:
                 return
 
-        msgs = [{"role": "system", "content": system_p3}] + self.conversation
+        msgs = self._con_paginas([{"role": "system", "content": system_p3}] + self.conversation)
         async for ev in self._stream_final(msgs, max_tokens=2048):
             yield ev
 
@@ -949,7 +984,7 @@ class ChatOrchestrator:
         # mensaje "del usuario" era un bloque de datos y el modelo respondía
         # como si el usuario se los hubiera traído ("los que acabas de traer"),
         # o arrancaba de cero con un saludo a mitad de la conversación.
-        msgs = (
+        msgs = self._con_paginas(
             [{"role": "system", "content": self._phase3_system()}]
             + conv_p3[:-1]
             + self.tool_msgs

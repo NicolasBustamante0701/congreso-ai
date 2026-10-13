@@ -36,6 +36,14 @@ async def download(url: str, timeout: int = 30) -> httpx.Response:
         return await c.get(url)
 
 
+def extract_pages(data: bytes) -> list[str]:
+    """Texto de cada página física, en orden ('' si la página no tiene texto)."""
+    import fitz
+
+    doc = fitz.open(stream=data, filetype="pdf")
+    return [page.get_text().strip() for page in doc]
+
+
 def extract_text(data: bytes) -> tuple[str, int]:
     """
     Devuelve (texto, número de páginas), recortado a MAX_TEXT_CHARS.
@@ -45,13 +53,10 @@ def extract_text(data: bytes) -> tuple[str, int]:
     cada dato. Las páginas sin texto extraíble (escaneadas) se listan al final
     en vez de pasar en silencio.
     """
-    import fitz
-
-    doc = fitz.open(stream=data, filetype="pdf")
-    pages = len(doc)
+    paginas = extract_pages(data)
+    pages = len(paginas)
     partes, vacias = [], []
-    for i, page in enumerate(doc, start=1):
-        t = page.get_text().strip()
+    for i, t in enumerate(paginas, start=1):
         if t:
             partes.append(f"[Página {i}]\n{t}")
         else:

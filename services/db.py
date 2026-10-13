@@ -7,6 +7,7 @@ actualización de la app nunca borra lo que el usuario ya tenía guardado.
 
   v1  sesiones transcritas, ventanas de audio y su índice FTS5
   v2  proyectos seguidos y alertas de cambios
+  v3  documentos PDF completos, por página, con índice FTS5
 """
 import sqlite3
 from contextlib import contextmanager
@@ -15,7 +16,7 @@ import config
 from config import logger
 
 DB_PATH = config.DB_FILE
-VERSION_ESQUEMA = 2
+VERSION_ESQUEMA = 3
 
 _MIGRACIONES = {
     1: """
@@ -77,6 +78,32 @@ _MIGRACIONES = {
             UNIQUE (numero, tipo, detalle)
         );
         CREATE INDEX alerta_no_leida ON alerta(leida, creada);
+    """,
+    3: """
+        CREATE TABLE documento (
+            id      TEXT PRIMARY KEY,
+            nombre  TEXT NOT NULL,
+            origen  TEXT NOT NULL DEFAULT '',
+            paginas INTEGER NOT NULL,
+            creado  TEXT NOT NULL
+        );
+        CREATE TABLE documento_pagina (
+            rowid_  INTEGER PRIMARY KEY,
+            doc_id  TEXT NOT NULL REFERENCES documento(id) ON DELETE CASCADE,
+            num     INTEGER NOT NULL,
+            texto   TEXT NOT NULL,
+            UNIQUE (doc_id, num)
+        );
+        CREATE VIRTUAL TABLE documento_fts USING fts5(
+            texto, content='documento_pagina', content_rowid='rowid_',
+            tokenize='unicode61 remove_diacritics 2'
+        );
+        CREATE TRIGGER documento_pagina_ai AFTER INSERT ON documento_pagina BEGIN
+            INSERT INTO documento_fts(rowid, texto) VALUES (new.rowid_, new.texto);
+        END;
+        CREATE TRIGGER documento_pagina_ad AFTER DELETE ON documento_pagina BEGIN
+            INSERT INTO documento_fts(documento_fts, rowid, texto) VALUES ('delete', old.rowid_, old.texto);
+        END;
     """,
 }
 

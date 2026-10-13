@@ -126,6 +126,14 @@ def offset_captura(video_id: str) -> int:
     return int(r[0] or 0)
 
 
+def ultimo_texto(video_id: str) -> str:
+    """Texto de la última ventana con voz (para empalmar una reconexión)."""
+    with _db() as con:
+        r = con.execute("""SELECT texto FROM ventana WHERE video_id = ? AND estado = 'ok'
+                           ORDER BY start_s DESC LIMIT 1""", (video_id,)).fetchone()
+    return r[0] if r else ""
+
+
 def listar_sesiones() -> list[dict]:
     with _db() as con:
         filas = con.execute(

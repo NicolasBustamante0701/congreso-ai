@@ -6,6 +6,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from config import logger, static_file
 from scraper import fetch_destacados, fetch_proyectos
+from services import documentos
 from services import pdf as pdf_service
 
 router = APIRouter()
@@ -94,6 +95,18 @@ async def congreso_proyectos():
     return {"pdfs": proyectos}
 
 
+def _guardar_completo(nombre: str, origen: str, data: bytes) -> str | None:
+    """
+    Guarda todas las páginas para preguntas posteriores (services/documentos).
+    Si falla, el PDF igual se puede usar con lo que entró al chat.
+    """
+    try:
+        return documentos.guardar(nombre, origen, pdf_service.extract_pages(data))
+    except Exception as e:
+        logger.warning("no se pudo guardar el PDF completo %s: %s", nombre, e)
+        return None
+
+
 @router.get("/pdf-thumbnail")
 async def pdf_thumbnail(url: str = Query(...)):
     try:
@@ -118,7 +131,8 @@ async def load_pdf_url(request: Request):
         if not pdf_service.looks_like_pdf(r):
             return JSONResponse({"ok": False, "error": f"La URL no devolvió un PDF (HTTP {r.status_code})."})
         text, pages = await asyncio.to_thread(pdf_service.extract_text, r.content)
-        return {"ok": True, "pages": pages, "text": text, "filename": url.split("/")[-1]}
+        doc_id = await asyncio.to_thread(_guardar_completo, url.split("/")[-1], url, r.content)
+        return {"ok": True, "pages": pages, "text": text, "filename": url.split("/")[-1], "doc_id": doc_id}
     except pdf_service.UrlNoPermitida as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
     except Exception as e:
@@ -134,7 +148,8 @@ async def upload_pdf(file: UploadFile = File(...)):
         return JSONResponse({"ok": False, "error": f"El PDF supera {mb} MB."}, status_code=413)
     try:
         text, pages = await asyncio.to_thread(pdf_service.extract_text, data)
-        return {"ok": True, "pages": pages, "text": text, "filename": file.filename}
+        doc_id = await asyncio.to_thread(_guardar_completo, file.filename or "documento.pdf", "archivo local", data)
+        return {"ok": True, "pages": pages, "text": text, "filename": file.filename, "doc_id": doc_id}
     except Exception as e:
         logger.warning("upload_pdf falló para %s: %s", file.filename, e)
         return {"ok": False, "error": f"No se pudo leer el PDF: {e}"}

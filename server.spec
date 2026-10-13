@@ -53,6 +53,7 @@ a = Analysis(
         'services.db',
         'services.seguimiento',
         'services.busqueda',
+        'services.documentos',
         'sqlite3',
         'openai',
         # ffmpeg_exe() lo importa dentro de la función, así que PyInstaller no
