@@ -170,3 +170,17 @@ def test_herramienta_ignora_argumentos_inventados():
         return None
 
     assert _solo({"dias": 7, "camara": "senado", "inventado": 1}, f) == {"dias": 7, "camara": "senado"}
+
+
+def test_mesa_directiva_desde_html_y_agenda():
+    from scraper import _mesa_desde_html, _preside_desde_agenda
+
+    html = ("<div><p>Mesa Directiva</p><p>Torres Morales, Miguel Ángel</p><p>Presidente</p>"
+            "<p>mtorres@congreso.gob.pe</p><p>Chacón Trujillo, Nilza Merly</p>"
+            "<p>Segunda Vicepresidenta</p></div>")
+    assert _mesa_desde_html(html) == [
+        {"cargo": "Presidente", "nombre": "Torres Morales, Miguel Ángel"},
+        {"cargo": "Segunda Vicepresidenta", "nombre": "Chacón Trujillo, Nilza Merly"},
+    ]
+    portada = "Sesión del martes 6 de octubre de 2026\nPRESIDENCIA DEL SEÑOR  \nOSCAR DE JESÚS RETO OTERO \n"
+    assert _preside_desde_agenda(portada) == "Oscar De Jesús Reto Otero"

@@ -626,3 +626,32 @@ def test_desenlaza_expediente_de_otro_proyecto():
     bien = f"| [00571-2026-2031-CD]({url}) | 12/10/2026 | Modifica la Ley 26497 |\n"
     assert url not in _desenlazar(mal, permitidos)
     assert url in _desenlazar(bien, permitidos)
+
+
+def test_recorte_del_expediente_conserva_los_pasos_mas_recientes(monkeypatch):
+    import json
+
+    from services import orchestrator
+    monkeypatch.setitem(orchestrator.MAX_TOOL_RESULT_CHARS_POR_TOOL, "fetch_expediente", 3000)
+    expediente = {
+        "numero": "00098-2026-2031-CD",
+        "seguimiento": [{"fecha": f"{d:02d}/10/2026", "detalle": "x" * 200} for d in range(1, 31)],
+        "todos_los_adjuntos": [{"url": "y" * 200}] * 20,
+    }
+    recortado = json.loads(orchestrator._recortar_resultado("fetch_expediente", expediente))
+    assert "todos_los_adjuntos" not in recortado
+    assert recortado["seguimiento"][-1]["fecha"] == "30/10/2026"
+    assert recortado["truncado"]["se_muestran"] == "los más recientes"
+
+
+def test_quita_razonamiento_filtrado():
+    from services.orchestrator import _quitar_razonamiento
+
+    filtrado = ("El usuario pide la agenda de comisiones del Senado.\n\nReviso los datos: hay 2 eventos.\n"
+                "Redacto la respuesta siguiendo el formato indicado.No se registran sesiones de comisiones.\n\n"
+                "### Otras actividades\n| a | b |")
+    limpio = _quitar_razonamiento(filtrado)
+    assert limpio.startswith("No se registran sesiones de comisiones.")
+    assert "El usuario" not in limpio
+    normal = "## Agenda\n| a | b |"
+    assert _quitar_razonamiento(normal) == normal

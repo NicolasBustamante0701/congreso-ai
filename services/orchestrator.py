@@ -64,7 +64,17 @@ MAX_TOOL_RESULT_CHARS_POR_TOOL = {
     # Índice + conteo de asuntos de hasta tres agendas (una por cámara) y el
     # texto de la principal: con 7000 el texto se comía todo el espacio.
     "fetch_agenda_pleno": 16000,
+    # Un proyecto debatido en el Pleno pasa de 15 pasos de seguimiento (PL 98:
+    # 18 000 caracteres). Con 7000 se cortaban justo los últimos: Diana no
+    # veía que el Pleno lo aprobó tras una reconsideración y lo envió al Senado.
+    "fetch_expediente": 22000,
 }
+
+# Si aun así no entra, esto se descarta antes de cortar filas: repite los
+# PDFs que ya vienen dentro de cada paso del seguimiento.
+_DESCARTABLES = ("todos_los_adjuntos",)
+# En estas listas lo último es lo más nuevo: se recortan por el principio.
+_LISTAS_CRONOLOGICAS = ("seguimiento",)
 
 
 def _recortar_resultado(nombre: str, resultado) -> str:
@@ -83,6 +93,12 @@ def _recortar_resultado(nombre: str, resultado) -> str:
     if len(texto) <= tope:
         return texto
 
+    if isinstance(resultado, dict) and any(k in resultado for k in _DESCARTABLES):
+        resultado = {k: v for k, v in resultado.items() if k not in _DESCARTABLES}
+        texto = json.dumps(resultado, ensure_ascii=False)
+        if len(texto) <= tope:
+            return texto
+
     if isinstance(resultado, dict):
         listas = [(k, v) for k, v in resultado.items() if isinstance(v, list) and len(v) > 1]
         if listas:
@@ -93,8 +109,11 @@ def _recortar_resultado(nombre: str, resultado) -> str:
             mejor = None
             while lo <= hi:
                 mid = (lo + hi) // 2
-                prueba = {**resultado, clave: filas[:mid],
-                          "truncado": {"campo": clave, "mostrados": mid, "total": total}}
+                parte = filas[-mid:] if clave in _LISTAS_CRONOLOGICAS else filas[:mid]
+                aviso = {"campo": clave, "mostrados": mid, "total": total}
+                if clave in _LISTAS_CRONOLOGICAS:
+                    aviso["se_muestran"] = "los más recientes"
+                prueba = {**resultado, clave: parte, "truncado": aviso}
                 t = json.dumps(prueba, ensure_ascii=False)
                 if len(t) <= tope:
                     mejor, lo = t, mid + 1
@@ -391,6 +410,27 @@ def _desenlazar_linea(texto: str, permitidos: set[str]) -> str:
     partes = re.split(r"(\[[^\]\n]+\]\([^)\s]+\))", texto)
     return "".join(pt if i % 2 else LINK_CONGRESO_RE.sub(suelto, pt)
                    for i, pt in enumerate(partes))
+
+
+# Razonamiento del modelo que se cuela como respuesta (Gemini por el shim de
+# OpenAI): empieza hablando del pedido en tercera persona y termina con un
+# "Redacto la respuesta..." pegado al texto real.
+_INICIO_RAZONAMIENTO_RE = re.compile(
+    r"^\s*(?:El usuario (?:pide|quiere|pregunta|solicita)|Reviso (?:los|el) (?:datos|resultado)|"
+    r"Analizo|La instrucción dice|Debo (?:responder|revisar))", re.IGNORECASE)
+_FIN_RAZONAMIENTO_RE = re.compile(
+    r"(?:Redacto|Escribo|Preparo|Armo|Procedo a (?:redactar|escribir))[^.\n]*\.\s*")
+
+
+def _quitar_razonamiento(texto: str) -> str:
+    """Saca el razonamiento filtrado al comienzo de una respuesta, si lo hay."""
+    if not _INICIO_RAZONAMIENTO_RE.match(texto):
+        return texto
+    finales = list(_FIN_RAZONAMIENTO_RE.finditer(texto))
+    if finales:
+        return texto[finales[-1].end():].lstrip()
+    m = re.search(r"^(?:#|\||\*\*)", texto, re.MULTILINE)
+    return texto[m.start():] if m else texto
 
 
 def _clave_proyecto(m: re.Match) -> tuple:
@@ -925,10 +965,19 @@ class ChatOrchestrator:
 
         pendiente = ""
         completo = ""
+        # Mientras el comienzo parezca razonamiento filtrado, no se emite nada:
+        # se decide al completarse la primera línea (o el final).
+        revisando_inicio = True
         async for kind, payload in llm.stream(msgs, max_tokens=max_tokens):
             if kind == "text":
                 # Siempre por línea: un link se limpia entero, nunca a medias.
                 pendiente += payload
+                if revisando_inicio:
+                    if "\n" not in pendiente and len(pendiente) < 300:
+                        continue
+                    if _INICIO_RAZONAMIENTO_RE.match(pendiente):
+                        continue  # se limpia completo al final
+                    revisando_inicio = False
                 corte = pendiente.rfind("\n")
                 if corte < 0 and len(pendiente) > 1500:
                     # Párrafo larguísimo sin saltos: cortar en el último punto
@@ -949,6 +998,8 @@ class ChatOrchestrator:
                 yield sse.error(payload)
                 return
         if pendiente:
+            if revisando_inicio:
+                pendiente = _quitar_razonamiento(pendiente)
             listo = limpio(pendiente)
             completo += listo
             yield sse.text(listo)

@@ -25,6 +25,7 @@ TTL_SEGUNDOS = {
     "fetch_expediente": 30 * 60,
     "leer_formula_legal": 30 * 60,
     "fetch_comisiones": 24 * 3600,
+    "fetch_mesa_directiva": 6 * 3600,
 }
 TTL_DEFAULT = 5 * 60
 MAX_ENTRADAS = 200

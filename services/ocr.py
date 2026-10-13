@@ -152,7 +152,7 @@ async def _transcribir(imagenes: list[tuple[int, str]]) -> str:
             resp = await llm.get_client("gemini").chat.completions.create(
                 model=model, messages=[{"role": "user", "content": contenido}],
                 max_tokens=8000, temperature=0, timeout=60,
-                **llm._extra_params("gemini"),
+                **llm._extra_params("gemini", model),
             )
             texto = (resp.choices[0].message.content or "").strip()
             if texto:

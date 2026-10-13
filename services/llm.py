@@ -50,10 +50,14 @@ def _label(provider: str) -> str:
     return provider.capitalize()
 
 
-def _extra_params(provider: str) -> dict:
+def _extra_params(provider: str, model: str = "") -> dict:
     # Los modelos "flash" de Gemini piensan por default y, a través del shim
-    # de OpenAI, ese razonamiento se cuela como texto normal en la respuesta.
-    return {"reasoning_effort": "low"} if provider == "gemini" else {}
+    # de OpenAI, ese razonamiento se cuela como texto normal en la respuesta
+    # (visto el 13/10/2026 con "low": "El usuario pide... Redacto la
+    # respuesta." antes de la tabla). flash-lite acepta "minimal"; "none" da 400.
+    if provider != "gemini":
+        return {}
+    return {"reasoning_effort": "minimal" if "lite" in model else "low"}
 
 
 def model_for(provider: str, role: str) -> str:
@@ -321,7 +325,7 @@ async def _deltas(provider, messages, *, role, max_tokens, temperature, meta=Non
         max_tokens=max_tokens,
         temperature=PROVIDERS.get(provider, {}).get("temperatura", temperature),
         stream=True,
-        **_extra_params(provider),
+        **_extra_params(provider, model or model_for(provider, role)),
     )
     try:
         async for chunk in stream:

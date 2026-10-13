@@ -19,6 +19,7 @@ from scraper import (
     fetch_expediente,
     fetch_formula_legal,
     fetch_interpelaciones,
+    fetch_mesa_directiva,
     fetch_proyectos,
     fetch_sesiones,
 )
@@ -220,10 +221,20 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "fetch_agenda_pleno",
-            "description": "Estructura real (por secciones e ítems) de la Agenda del Pleno vigente: qué se va a debatir.",
+            "description": (
+                "Documento de la Agenda del Pleno (PDF oficial) de Diputados, del Senado o "
+                "del Congreso: estructura por secciones e ítems, qué se va a debatir. Para "
+                "'la última agenda del Pleno del Senado' usar esta con camara='senado', no "
+                "fetch_agenda_camaras (que es el calendario de actividades)."
+            ),
             "parameters": {
                 "type": "object",
-                "properties": {}
+                "properties": {
+                    "camara": {
+                        "type": "string",
+                        "description": "Opcional: 'senado', 'diputados' o 'congreso' para poner esa agenda primero."
+                    }
+                }
             }
         }
     },
@@ -243,6 +254,25 @@ TOOLS = [
                     "camara": {
                         "type": "string",
                         "description": "Opcional. 'senado' o 'diputados' para priorizar los enlaces de esa cámara en la respuesta. Omitir para incluir ambas — no combines esto con múltiples llamadas."
+                    }
+                }
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "fetch_mesa_directiva",
+            "description": (
+                "Mesa Directiva de cada cámara: quién preside el Senado o la Cámara de "
+                "Diputados y sus vicepresidentes."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "camara": {
+                        "type": "string",
+                        "description": "Opcional: 'senado' o 'diputados'. Omitir para ambas."
                     }
                 }
             }
@@ -353,7 +383,8 @@ TOOL_MAP = {
                                    numero=args.get("numero_proyecto") or args.get("numero", "")
                                ),
     "fetch_agenda_comisiones": lambda args: fetch_agenda_comisiones(**{k: v for k, v in args.items() if k in ("dias", "comision")}),
-    "fetch_agenda_pleno":      lambda args: fetch_agenda_pleno(),
+    "fetch_agenda_pleno":      lambda args: fetch_agenda_pleno(**_solo(args, fetch_agenda_pleno)),
+    "fetch_mesa_directiva":    lambda args: fetch_mesa_directiva(**_solo(args, fetch_mesa_directiva)),
     "fetch_comisiones":        lambda args: fetch_comisiones(**{k: v for k, v in args.items() if k in ("camara",)}),
     "fetch_agenda_camaras":    lambda args: fetch_agenda_camaras(**{k: v for k, v in args.items() if k in ("dias", "camara")}),
     "fetch_interpelaciones":   lambda args: fetch_interpelaciones(**{k: v for k, v in args.items() if k in ("ministro",)}),
@@ -371,6 +402,7 @@ STATUS_LABELS = {
     "fetch_expediente":        "Consultando el expediente completo en SPLEY (5 pestañas)...",
     "fetch_agenda_comisiones": "Revisando agenda de comisiones...",
     "fetch_agenda_pleno":      "Cargando la Agenda del Pleno...",
+    "fetch_mesa_directiva":    "Consultando la Mesa Directiva...",
     "fetch_comisiones":        "Consultando el cuadro de comisiones...",
     "fetch_agenda_camaras":    "Revisando agenda del Congreso bicameral...",
     "fetch_interpelaciones":   "Buscando mociones de interpelación...",

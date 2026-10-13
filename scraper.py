@@ -495,7 +495,7 @@ def _coincide_materia(titulo: str, keywords: list[str]) -> bool:
     return all(any(w.startswith(kw) for w in palabras) for kw in keywords)
 
 
-async def _fetch_spley_por_materia(materia: str, limit: int = 20):
+async def _fetch_spley_por_materia(materia: str, limit: int = 20, camara: str = None):
     """
     SPLEY ignora strBusqueda (devuelve los recientes igual), así que se traen
     los ~300 proyectos más recientes y se filtra por título de este lado.
@@ -517,6 +517,11 @@ async def _fetch_spley_por_materia(materia: str, limit: int = 20):
         logger.warning("Búsqueda por materia %r falló: %s", materia, _e)
         return None
 
+    # "Educación en el Senado": sin esto la cámara se ignoraba y salían
+    # proyectos de Diputados.
+    cod_camara = _codigo_camara(camara)
+    if cod_camara:
+        all_items = [p for p in all_items if p.get("_camara") == cod_camara]
     matches = [p for p in all_items if _coincide_materia(p.get("titulo"), keywords)]
     criterio = (f"Títulos que contienen TODAS estas palabras: {', '.join(keywords)}. "
                 f"Revisados los {len(all_items)} proyectos más recientes de SPLEY; "
@@ -561,7 +566,7 @@ async def fetch_proyectos(autor=None, comision=None, numero=None, materia=None,
 
         # Materia: SPLEY ignores strBusqueda for topic searches — use client-side filter
         if materia and not dias:
-            result = await _fetch_spley_por_materia(materia, limit)
+            result = await _fetch_spley_por_materia(materia, limit, camara=camara)
             if result is not None:
                 return result
 
@@ -637,8 +642,11 @@ async def fetch_proyectos(autor=None, comision=None, numero=None, materia=None,
                 payload["strBusqueda"] = comision
 
         try:
+            # Por autor se recorren todos los periodos: con el corte en
+            # fetch_size se quedaba en 2026-2031 (ya pasa de 300) y a Ruth
+            # Luque le salían 2 proyectos, sin ninguno de su periodo anterior.
             items = await _spley_proyectos(
-                c, payload, min_items=fetch_size,
+                c, payload, min_items=10**9 if autor and not numero else fetch_size,
                 periodos=_periodos_de_numero(numero) if numero else None)
             if items:
                 if filtro_local:
@@ -1687,7 +1695,7 @@ async def fetch_expediente(numero: str):
                 "enlace": "",
             }
             for c in comisiones
-        ],
+        ] or _comisiones_desde_seguimiento(seguimiento),
         "fases":                 [f["fase"] for f in data.get("fases", []) if f.get("tipo") in (1, 2)],
         # Pestaña 1
         "seguimiento":           seguimiento,
@@ -1713,6 +1721,27 @@ async def fetch_expediente(numero: str):
 
 
 # ── Texto real del proyecto (fórmula legal) ─────────────────────
+
+def _comisiones_desde_seguimiento(seguimiento: list) -> list:
+    """
+    Comisiones a las que pasó el proyecto, sacadas de su seguimiento.
+
+    En los proyectos del periodo 2026-2031 la pestaña de comisiones de SPLEY
+    suele venir vacía aunque el seguimiento diga "EN COMISIÓN — Desarrollo
+    Agrario; Defensa del Consumidor..." (visto en 00011-2026-2031-CD), y
+    Diana respondía que no estaba en ninguna comisión.
+    """
+    vistas, out = set(), []
+    for paso in seguimiento or []:
+        for nombre in (paso.get("comision") or "").split(";"):
+            nombre = nombre.strip()
+            if nombre and nombre not in vistas:
+                vistas.add(nombre)
+                out.append({"nombre": nombre, "id": "", "enlace": "",
+                            "fecha_derivacion": paso.get("fecha") or "",
+                            "fuente": "seguimiento del expediente"})
+    return out
+
 
 async def fetch_formula_legal(numero_proyecto: str):
     """
@@ -2088,7 +2117,7 @@ async def _agenda_pleno_camara(c, camara: str, url: str):
     return resultado
 
 
-async def fetch_agenda_pleno():
+async def fetch_agenda_pleno(camara: str = None):
     """
     Agenda del Pleno más reciente: la de la Cámara de Diputados, la del
     Senado y la de la Relatoría del Congreso. Devuelve la más nueva arriba
@@ -2115,6 +2144,12 @@ async def fetch_agenda_pleno():
             return date.min
 
     agendas.sort(key=_fecha, reverse=True)
+    # "La última agenda del Pleno del Senado": esa va arriba aunque la de
+    # Diputados sea más nueva.
+    pedida = {"D": "Cámara de Diputados", "S": "Senado", "C": "Congreso"}.get(
+        _codigo_camara(camara) or "")
+    if pedida:
+        agendas.sort(key=lambda a: a.get("camara") != pedida)
     principal, otras = agendas[0], agendas[1:]
     texto = principal.pop("texto", "")
     if otras:
@@ -2210,6 +2245,71 @@ def _parse_indice_agenda_pleno(doc) -> list:
             seccion["subsecciones"] = subsecciones
         estructura.append(seccion)
     return estructura
+
+
+# ── Mesa Directiva ────────────────────────────────────────────
+
+MESA_DIRECTIVA_URLS = {
+    "Senado": f"{SENADO}/mesa-directiva/",
+    "Cámara de Diputados": f"{DIPUTADOS}/mesa-directiva/",
+}
+_CARGOS_MESA = ("Presidente", "Presidenta", "Primer Vicepresidente", "Primera Vicepresidenta",
+                "Segundo Vicepresidente", "Segunda Vicepresidenta",
+                "Tercer Vicepresidente", "Tercera Vicepresidenta")
+
+
+def _mesa_desde_html(html: str) -> list[dict]:
+    """[{cargo, nombre}] de una página de Mesa Directiva: el nombre va justo antes del cargo."""
+    lineas = BeautifulSoup(html, "html.parser").get_text("\n", strip=True).split("\n")
+    return [{"cargo": l, "nombre": lineas[i - 1]}
+            for i, l in enumerate(lineas) if l in _CARGOS_MESA and i > 0]
+
+
+def _preside_desde_agenda(texto: str) -> str:
+    m = re.search(r"PRESIDENCIA DE(?:L SEÑOR|\s+LA SEÑORA)\s+([A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ .]+)", texto or "")
+    return " ".join(m.group(1).split()).title() if m else ""
+
+
+async def fetch_mesa_directiva(camara: str = None):
+    """
+    Presidente y vicepresidentes de cada cámara.
+
+    Senado: su página oficial de Mesa Directiva (nombre y cargo en texto).
+    Diputados: su página solo publica una foto sin nombres (verificado: el
+    OCR no saca nada), así que el presidente sale de la portada de la última
+    Agenda del Pleno ("PRESIDENCIA DEL SEÑOR ..."), y se dice de dónde sale.
+    """
+    pedida = _codigo_camara(camara)
+    out = {}
+    async with _client() as c:
+        for nombre_camara, url in MESA_DIRECTIVA_URLS.items():
+            if pedida and nombre_camara[0] != {"D": "C", "S": "S"}.get(pedida, nombre_camara[0]):
+                continue
+            try:
+                r = await c.get(url, headers=HEADERS)
+                miembros = _mesa_desde_html(r.text) if r.status_code == 200 else []
+            except Exception as _e:
+                logger.warning("mesa directiva de %s: %s", nombre_camara, _e)
+                miembros = []
+            out[nombre_camara] = {"miembros": miembros, "fuente": url}
+    if "Cámara de Diputados" in out and not out["Cámara de Diputados"]["miembros"]:
+        try:
+            agenda = await fetch_agenda_pleno(camara="diputados")
+            if agenda.get("camara") == "Cámara de Diputados":
+                preside = _preside_desde_agenda(agenda.get("texto", ""))
+                if preside:
+                    out["Cámara de Diputados"] = {
+                        "miembros": [{"cargo": "Presidencia de la sesión del Pleno", "nombre": preside}],
+                        "fuente": agenda.get("enlace"),
+                        "nota": ("La página de Mesa Directiva de Diputados solo publica una foto sin "
+                                 "nombres. El dato sale de la portada de la Agenda del Pleno del "
+                                 f"{agenda.get('fecha')}, que indica quién preside la sesión; dilo así."),
+                    }
+        except Exception as _e:
+            logger.warning("mesa directiva de Diputados desde la agenda: %s", _e)
+    if not any(v["miembros"] for v in out.values()):
+        return {"sin_datos": True, "mensaje": "No se pudo leer la Mesa Directiva en los portales oficiales."}
+    return {"mesas_directivas": out}
 
 
 # ── Mociones de interpelación ─────────────────────────────────
