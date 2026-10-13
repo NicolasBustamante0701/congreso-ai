@@ -5,7 +5,13 @@ from datetime import date
 
 import pytest
 
-from scraper import estado_legislativo, estado_legislativo_texto
+from scraper import (
+    _contar_items_agenda,
+    _detectar_camara,
+    _periodos_de_numero,
+    estado_legislativo,
+    estado_legislativo_texto,
+)
 
 
 @pytest.mark.parametrize("hoy,en_legislatura,legislatura", [
@@ -114,3 +120,35 @@ async def test_lista_de_sinonimos_cae_a_coincidencia_parcial_avisada():
         # Con dos palabras no hay coincidencia parcial.
         r2 = await scraper._fetch_spley_por_materia("salud medicamentos")
         assert r2.get("sin_datos")
+
+
+@pytest.mark.parametrize("numero,periodos", [
+    # Formato viejo: solo existe en 2021-2026. Sin esto, la búsqueda se
+    # conformaba con los 300+ proyectos de 2026-2031 y daba "no encontrado".
+    ("14864/2025-CR", [2021]),
+    ("00571-2026-2031-CD", [2026]),
+    ("571", None),
+])
+def test_periodos_de_numero(numero, periodos):
+    assert _periodos_de_numero(numero) == periodos
+
+
+def test_detectar_camara_reconoce_diputada_y_senadora():
+    assert _detectar_camara("Presidenta: Diputada Flor Meza Rivera") == "Cámara de Diputados"
+    assert _detectar_camara("Senadora Patricia Juárez") == "Senado"
+
+
+def test_contar_items_agenda_reinicia_por_subseccion():
+    estructura = [{"seccion": "Mociones de orden del día", "subsecciones": [
+        {"seccion": "Comisiones de investigación"},
+        {"seccion": "Comisiones especiales"},
+    ]}]
+    texto = "\n".join([
+        "MOCIONES DE ORDEN DEL DÍA", "COMISIONES DE INVESTIGACIÓN", "1.", "x", "2.",
+        "COMISIONES ESPECIALES", "1.", "2.", "3.", "Página 7.", "5.",
+    ])
+    _contar_items_agenda(texto, estructura)
+    subs = estructura[0]["subsecciones"]
+    assert subs[0]["asuntos"] == 2
+    assert subs[1]["asuntos"] == 3  # "5." no es correlativo
+    assert estructura[0]["asuntos"] == 5

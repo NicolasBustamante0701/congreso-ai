@@ -61,6 +61,9 @@ MAX_TOOLS_PARALELO = 4
 # algo más cargada sin volver a cortar por la mitad.
 MAX_TOOL_RESULT_CHARS_POR_TOOL = {
     "buscar_proyectos": 60000,
+    # Índice + conteo de asuntos de hasta tres agendas (una por cámara) y el
+    # texto de la principal: con 7000 el texto se comía todo el espacio.
+    "fetch_agenda_pleno": 16000,
 }
 
 

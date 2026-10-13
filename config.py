@@ -153,6 +153,11 @@ _PROVIDERS = {
         # en esta cuenta, verificado.
         "router_model": "gemini-flash-lite-latest",
         "main_model":   "gemini-flash-lite-latest",
+        # Cuando el modelo principal responde 503 ("high demand") se prueba
+        # con estos antes de cambiar de proveedor. El 13/10/2026 los dos
+        # "-latest" daban 503 mientras este respondía (lento: 10-17 s al
+        # primer token, por eso tiene su propio timeout en llm.stream).
+        "modelos_respaldo": ["gemini-3-flash-preview"],
     },
     "cerebras": {
         "base_url":     "https://api.cerebras.ai/v1",

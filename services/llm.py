@@ -127,6 +127,10 @@ def is_rate_limit(e) -> bool:
     # esperar no lo arregla: reintentar solo sumaba 24 s antes del error.
     if "error code: 402" in s or "payment_required" in s:
         return False
+    # El 413 de Groq dice "tokens per minute" pero es un pedido más grande
+    # que el límite: esperar no lo achica (ver recortar_para_limite).
+    if is_too_large(e):
+        return False
     return any(x in s for x in ("rate limit", "429", "tokens per", "quota", "per day",
                                  "resource_exhausted", "resource exhausted"))
 
@@ -170,6 +174,57 @@ def is_tool_format_error(e) -> bool:
     return "tool_use_failed" in s or "failed_generation" in s or "400" in s
 
 
+def is_overloaded(e) -> bool:
+    """El modelo está saturado (503 / UNAVAILABLE): otro modelo puede andar."""
+    s = str(e).lower()
+    return ("error code: 503" in s or "unavailable" in s or "high demand" in s
+            or "overloaded" in s)
+
+
+class RespuestaVacia(Exception):
+    """El proveedor cerró el stream sin mandar texto."""
+
+
+def is_too_large(e) -> bool:
+    """El pedido supera el límite del proveedor (Groq: 413 por tokens por minuto)."""
+    s = str(e).lower()
+    return "error code: 413" in s or "request too large" in s
+
+
+_AVISO_RECORTE = ("\n[… recortado: el proveedor de respaldo no acepta más texto; "
+                  "si falta algo, dilo en la respuesta]")
+
+
+def recortar_para_limite(messages, max_tokens: int, e):
+    """
+    Versión de `messages` que entra en el límite que informó el 413, o None.
+
+    Groq (tier gratis) acepta 8000 tokens por pedido entre entrada y salida:
+    con los datos de una consulta grande (24 000 tokens medidos) fallaba
+    siempre y, con Gemini caído, Diana no respondía nada. Recorta en
+    proporción los mensajes largos (los datos de las herramientas) y baja
+    max_tokens; mejor una respuesta con datos recortados y avisada que ninguna.
+    """
+    m = re.search(r"limit (\d+), requested (\d+)", str(e), re.IGNORECASE)
+    if not m:
+        return None
+    limite, pedido = int(m.group(1)), int(m.group(2))
+    tope = min(max_tokens, max(1024, limite // 4))
+    entrada = max(1, pedido - max_tokens)
+    factor = (limite - tope - 300) / entrada * 0.85
+    if factor <= 0.05:
+        return None
+    nuevos = []
+    for msg in messages:
+        contenido = msg.get("content")
+        if isinstance(contenido, str) and len(contenido) > 800:
+            corte = max(800, int(len(contenido) * factor))
+            if corte < len(contenido):
+                msg = {**msg, "content": contenido[:corte] + _AVISO_RECORTE}
+        nuevos.append(msg)
+    return nuevos, tope
+
+
 def _es_cuota_diaria(e) -> bool:
     s = str(e).lower()
     return "per day" in s or "tpd" in s or "perday" in s
@@ -194,6 +249,12 @@ def friendly_error(e, provider: str = LLM_PROVIDER) -> str:
         return f"Llegamos al límite de tokens por ahora. Vuelve a intentar {cuando}."
     if is_rate_limit(e):
         return "Muchas consultas muy rápido. Espera unos segundos y vuelve a intentarlo."
+    if is_overloaded(e):
+        return (f"{_label(provider)} está saturado en este momento (error 503 del proveedor) "
+                "y los respaldos tampoco respondieron. Intenta de nuevo en unos minutos.")
+    if is_too_large(e):
+        return ("La consulta trae más datos de los que acepta el proveedor de IA. "
+                "Prueba con una pregunta más acotada (menos días o un tema puntual).")
     if "timeout" in type(e).__name__.lower() or "timed out" in s:
         return f"{_label(provider)} tardó demasiado en responder. Intenta de nuevo en un momento."
     return "Hubo un problema al conectar. Intenta de nuevo."
@@ -211,28 +272,50 @@ async def complete_router(messages, *, tools, tool_choice="required", max_tokens
     last_exc = None
     chain = provider_chain()
     for i, provider in enumerate(chain):
-        model = model_for(provider, "router")
-        timeout = ROUTER_TIMEOUT if i < len(chain) - 1 else LLM_READ_TIMEOUT
-        try:
-            with timed("LLM router", provider=provider, model=model):
-                resp = await get_client(provider).chat.completions.create(
-                    model=model, messages=messages, tools=tools, tool_choice=tool_choice,
-                    max_tokens=max_tokens, temperature=temperature, stream=False,
-                    timeout=timeout,
-                )
-            return resp.choices[0]
-        except Exception as e:
-            last_exc = last_exc or e
-            if is_tool_format_error(e):
-                raise
+        ultimo = i == len(chain) - 1
+        # Modelo del router primero; si se satura o se cuelga, los de respaldo
+        # (lentos: espera larga); si no llama ninguna herramienta (gpt-oss-20b
+        # a veces devuelve vacío), el modelo grande del mismo proveedor.
+        candidatos = [(model_for(provider, "router"), "rapido")]
+        candidatos += [(m, "lento") for m in PROVIDERS.get(provider, {}).get("modelos_respaldo", [])]
+        principal = model_for(provider, "main")
+        if principal not in [m for m, _ in candidatos]:
+            candidatos.append((principal, "formato"))
+        fallo = None
+        for model, motivo in candidatos:
+            if motivo == "lento" and not (fallo and (is_overloaded(fallo) or _es_timeout(fallo))):
+                continue
+            if motivo == "formato" and not (fallo and is_tool_format_error(fallo)):
+                continue
+            timeout = LLM_READ_TIMEOUT if (ultimo or motivo == "lento") else ROUTER_TIMEOUT
+            try:
+                with timed("LLM router", provider=provider, model=model):
+                    resp = await get_client(provider).chat.completions.create(
+                        model=model, messages=messages, tools=tools, tool_choice=tool_choice,
+                        max_tokens=max_tokens, temperature=temperature, stream=False,
+                        timeout=timeout,
+                    )
+                return resp.choices[0]
+            except Exception as e:
+                last_exc = last_exc or e
+                fallo = e
     # Se reporta el error del proveedor principal: es el que el usuario
     # configuró, y el de un respaldo sin saldo confundiría más que ayudar.
+    # Un tool_call malformado igual llega acá: el orquestador sabe responder
+    # sin herramientas (antes se cortaba en el primero, sin probar el resto).
+    if fallo is not None and is_tool_format_error(fallo):
+        raise fallo
     raise last_exc
 
 
-async def _deltas(provider, messages, *, role, max_tokens, temperature, meta=None):
+def _es_timeout(e) -> bool:
+    return "timeout" in type(e).__name__.lower() or "timed out" in str(e).lower()
+
+
+async def _deltas(provider, messages, *, role, max_tokens, temperature, meta=None,
+                  model=None):
     stream = await get_client(provider).chat.completions.create(
-        model=model_for(provider, role),
+        model=model or model_for(provider, role),
         messages=messages,
         max_tokens=max_tokens,
         temperature=temperature,
@@ -269,19 +352,29 @@ async def stream(messages, *, role="main", max_tokens=2048, temperature=0.4):
         if i > 0:
             yield ("status", f"{_label(chain[i - 1])} no respondió, probando con {_label(provider)}...")
         hay_respaldo = i < len(chain) - 1
-        for attempt in range(MAX_ATTEMPTS):
+        modelos = [model_for(provider, role)] + list(
+            PROVIDERS.get(provider, {}).get("modelos_respaldo", []))
+        msgs, tope = messages, max_tokens
+        attempt = m_idx = recortes = 0
+        while attempt < MAX_ATTEMPTS:
+            model = modelos[m_idx]
+            # Los modelos de respaldo son más lentos al primer token (medido:
+            # 10-17 s); con el timeout corto se los descartaba antes de hablar.
+            espera = (FIRST_TOKEN_TIMEOUT if m_idx == 0 else LLM_READ_TIMEOUT) if hay_respaldo else None
             emitted = False
             meta: dict = {}
-            deltas = _deltas(provider, messages, role=role,
-                             max_tokens=max_tokens, temperature=temperature, meta=meta)
+            deltas = _deltas(provider, msgs, role=role, model=model,
+                             max_tokens=tope, temperature=temperature, meta=meta)
             try:
-                with timed("LLM stream", provider=provider, model=model_for(provider, role),
-                           intento=attempt + 1, max_tokens=max_tokens):
+                with timed("LLM stream", provider=provider, model=model,
+                           intento=attempt + 1, max_tokens=tope):
                     try:
-                        first = await asyncio.wait_for(
-                            anext(deltas), FIRST_TOKEN_TIMEOUT if hay_respaldo else None)
+                        first = await asyncio.wait_for(anext(deltas), espera)
                     except StopAsyncIteration:
-                        return
+                        # Visto con gemini-3-flash-preview: el razonamiento se
+                        # come los tokens y el stream termina sin texto. Dar
+                        # eso por respuesta dejaba al usuario sin nada.
+                        raise RespuestaVacia(f"{provider} {model} terminó sin texto") from None
                     emitted = True
                     yield ("text", first)
                     async for delta in deltas:
@@ -291,7 +384,7 @@ async def stream(messages, *, role="main", max_tokens=2048, temperature=0.4):
                                    "incompleta. Pide la parte que falta (por ejemplo, \"sigue con la agenda\").")
                 return
             except Exception as e:
-                if provider == chain[0]:
+                if provider == chain[0] and primary_exc is None:
                     primary_exc = e
                 if emitted:
                     logger.error("Stream de %s cortado a mitad de la respuesta: %s", provider, e)
@@ -304,6 +397,31 @@ async def stream(messages, *, role="main", max_tokens=2048, temperature=0.4):
                                        provider, attempt + 1, MAX_ATTEMPTS, wait)
                         yield ("status", f"Límite de {_label(provider)}, reintentando en {wait:.0f}s...")
                         await asyncio.sleep(wait)
+                        attempt += 1
+                        continue
+                colgado = isinstance(e, (asyncio.TimeoutError, TimeoutError))
+                if (is_overloaded(e) or colgado or isinstance(e, RespuestaVacia)) \
+                        and m_idx + 1 < len(modelos):
+                    m_idx += 1
+                    logger.warning("%s %s saturado, pruebo con %s", provider, model, modelos[m_idx])
+                    yield ("status", f"{_label(provider)} está saturado, probando con otro modelo...")
+                    continue
+                # Un timeout suelto (visto con Groq: 10 s sin conectar) se
+                # reintenta una vez antes de abandonar al proveedor.
+                if colgado and attempt == 0 and m_idx == len(modelos) - 1:
+                    attempt += 1
+                    yield ("status", f"{_label(provider)} tarda, reintentando...")
+                    continue
+                # Más de una vuelta: la estimación por caracteres se queda
+                # corta (visto: 24 226 → 11 455 → 8 720 con límite 8000).
+                if is_too_large(e) and recortes < 3:
+                    recorte = recortar_para_limite(msgs, tope, e)
+                    if recorte:
+                        msgs, tope = recorte
+                        recortes += 1
+                        logger.warning("%s: pedido demasiado grande, reintento recortado (max_tokens=%d)",
+                                       provider, tope)
+                        yield ("status", f"Ajustando la consulta al límite de {_label(provider)}...")
                         continue
                 break
             finally:

@@ -404,10 +404,31 @@ def _camara_de_numero(numero) -> str | None:
     return {"CR": "C", "CD": "D", "S": "S"}[m.group(1)] if m else None
 
 
-async def _spley_proyectos(c, payload: dict, min_items: int = 1) -> list[dict]:
+def _periodos_de_numero(numero) -> list[int] | None:
+    """
+    Periodo donde hay que buscar un número de proyecto, o None si no se sabe.
+
+    '14864/2025-CR' es del formato viejo, que solo existe en 2021-2026;
+    '00040-2026-2031-CD' lleva el periodo adentro. Sin esto la búsqueda por
+    número recorría los periodos del más nuevo al más viejo y se conformaba
+    con los 300 del 2026-2031 (ya son más de 300), así que todo proyecto del
+    periodo anterior salía como "no encontrado".
+    """
+    texto = str(numero or "")
+    m = re.search(r"-(\d{4})-\d{4}-", texto)
+    if m:
+        return [int(m.group(1))]
+    if "/" in texto:
+        return [PER_PAR_ID]
+    return None
+
+
+async def _spley_proyectos(c, payload: dict, min_items: int = 1,
+                           periodos: list[int] | None = None) -> list[dict]:
     """
     Corre lista-con-filtro sobre los periodos parlamentarios, del más nuevo al
     más viejo, y devuelve los proyectos anotados con su periodo en `_perPar`.
+    `periodos` restringe la búsqueda (ver _periodos_de_numero).
 
     Sigue al periodo anterior en vez de cortar en el primero que responde:
     2026-2031 abrió con un único proyecto, así que quedarse ahí dejaría la app
@@ -415,7 +436,7 @@ async def _spley_proyectos(c, payload: dict, min_items: int = 1) -> list[dict]:
     para que la mezcla de periodos salga coherente.
     """
     out: list[dict] = []
-    for per in await _periodos():
+    for per in periodos or await _periodos():
         camaras = list(CAMARAS) if per >= PER_PAR_BICAMERAL else ["C"]
         for cod in camaras:
             try:
@@ -616,7 +637,9 @@ async def fetch_proyectos(autor=None, comision=None, numero=None, materia=None,
                 payload["strBusqueda"] = comision
 
         try:
-            items = await _spley_proyectos(c, payload, min_items=fetch_size)
+            items = await _spley_proyectos(
+                c, payload, min_items=fetch_size,
+                periodos=_periodos_de_numero(numero) if numero else None)
             if items:
                 if filtro_local:
                     items = [p for p in items if filtro_local(p)]
@@ -981,6 +1004,14 @@ async def _documentos_disponibles():
                 "enlace": agenda["enlace"],
                 "tipo": "Agenda del Pleno (PDF)",
             })
+        # La última agenda de cada una de las otras cámaras.
+        for otra in agenda.get("otras_agendas") or []:
+            if otra.get("enlace"):
+                docs.append({
+                    "titulo": otra.get("titulo") or "Agenda del Pleno",
+                    "enlace": otra["enlace"],
+                    "tipo": f"Agenda del Pleno — {otra.get('camara', 'Congreso')} (PDF)",
+                })
         for prev in (agenda.get("agendas_anteriores") or [])[:5]:
             if prev.get("enlace"):
                 docs.append({
@@ -1040,7 +1071,8 @@ async def fetch_estado_proyecto(numero: str):
     async with _client() as c:
         try:
             items = await _spley_proyectos(c, {"page": 0, "size": 300},
-                                           min_items=300)
+                                           min_items=300,
+                                           periodos=_periodos_de_numero(numero))
             if items:
                 # Match exacto por número. Antes era `num_clean in proyectoLey`,
                 # que con números cortos matcheaba cualquier proyecto que los
@@ -1436,7 +1468,8 @@ async def fetch_expediente(numero: str):
     # Resolve pleyNum from list if needed
     async with _client() as c:
         items = await _spley_proyectos(c, {"page": 0, "size": 300},
-                                       min_items=300)
+                                       min_items=300,
+                                       periodos=_periodos_de_numero(numero))
         if not items:
             return {"error": f"No se pudo buscar el proyecto {numero}."}
         cam_pedida = _camara_de_numero(numero)
@@ -1800,21 +1833,40 @@ async def fetch_agenda_comisiones(dias: int = 2, comision: str = None):
                 logger.debug("sintesis item failed: %s", _e)
                 continue
 
-    if not sintesis:
+    # Desde la bicameralidad las Síntesis de Agendas dejaron de publicarse a
+    # diario y las sesiones de comisiones salen en la agenda de
+    # comunicaciones. Solo con las síntesis Diana decía "no hay sesiones" un
+    # día con seis (verificado el 13/10/2026).
+    agenda = await fetch_agenda_camaras(dias=max(dias, 1), camara="comision")
+    sesiones = agenda.get("sesiones") or []
+    if comision:
+        buscado = _sin_acentos(comision)
+        sesiones = [x for x in sesiones
+                    if buscado in _sin_acentos(x["tema"] + " " + x["organiza"])]
+
+    if not sintesis and not sesiones:
+        if agenda.get("error"):
+            return agenda
         return {"sin_datos": True,
                 "mensaje": "No se encontraron sesiones de comisiones programadas"
                            + (f" para '{comision}'" if comision else "")
                            + " en los próximos días."}
 
-    return {
-        "fuente": "Síntesis de Agendas — Departamento de Comisiones, congreso.gob.pe",
+    resultado = {
+        "fuente": ("Agenda del Congreso (comunicaciones.congreso.gob.pe/agenda) y "
+                   "Síntesis de Agendas del Departamento de Comisiones"),
         "dias_consultados": dias,
-        "nota": nota,
-        "sintesis": sintesis,
-        "instruccion": ("Cada síntesis lista las sesiones agrupadas por día: "
-                        "comisión, tipo de sesión, hora, edificio/sala y plataforma. "
-                        "Extrae SOLO las sesiones de los días consultados."),
+        "sesiones": sesiones,
+        "total_sesiones": len(sesiones),
+        "instruccion": ("Lista TODAS las sesiones de \"sesiones\" (cada una trae su "
+                        "\"enlace\" a la agenda del día) y, si hay \"sintesis\", las "
+                        "que estas no repitan. Extrae SOLO las de los días consultados."),
     }
+    if sintesis:
+        resultado["sintesis"] = sintesis
+    if nota:
+        resultado["nota"] = nota
+    return resultado
 
 
 # ── Agenda del Pleno ──────────────────────────────────────────
@@ -1825,63 +1877,83 @@ AGENDA_PLENO_URL = (
 )
 
 
-async def fetch_agenda_pleno():
+# Desde la bicameralidad cada cámara publica su Agenda del Pleno en su propio
+# portal; la Relatoría de arriba quedó congelada en junio de 2026 (la última
+# del Congreso unicameral) y Diana presentaba esa como "la agenda del Pleno".
+AGENDAS_PLENO_CAMARAS = {
+    "Cámara de Diputados": f"{DIPUTADOS}/sesiones-del-pleno/",
+    "Senado": f"{SENADO}/sesiones_del_pleno/",
+}
+
+
+async def _agendas_de_camara(c, url: str) -> list[tuple[date, str]]:
+    """(fecha, enlace) de las agendas del Pleno publicadas, la más nueva primero."""
+    r = await c.get(url, headers=HEADERS)
+    if r.status_code != 200:
+        return []
+    soup = BeautifulSoup(r.text, "html.parser")
+    out, vistos = [], set()
+    for a in soup.select("a[href]"):
+        href = a["href"]
+        if not href.lower().endswith(".pdf") or "AGENDA" not in href.upper() or href in vistos:
+            continue
+        fila = a.find_parent(["tr", "li"])
+        m = re.search(r"(\d{2})/(\d{2})/(\d{4})", fila.get_text(" ", strip=True) if fila else "")
+        if not m:
+            continue
+        try:
+            fecha = date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
+        except ValueError:
+            continue
+        vistos.add(href)
+        out.append((fecha, href))
+    out.sort(key=lambda x: x[0], reverse=True)
+    return out
+
+
+def _leer_agenda_pdf(data: bytes):
+    import fitz
+    doc = fitz.open(stream=data, filetype="pdf")
+    return ("\n".join(page.get_text() for page in doc).strip(),
+            _parse_indice_agenda_pleno(doc))
+
+
+def _contar_items_agenda(texto: str, estructura: list) -> None:
     """
-    Obtiene la Agenda del Pleno más reciente desde el sistema de Relatoría
-    (la misma fuente del iframe de congreso.gob.pe/agenda-del-pleno).
-    El documento es un PDF: se extrae el texto con PyMuPDF y se cuentan
-    los tipos de asuntos agendados.
+    Agrega a cada sección de `estructura` cuántos asuntos numerados (1., 2.,
+    ...) tiene en el cuerpo. Solo cuenta numeraciones correlativas que
+    arrancan en 1 después del título de la sección, así que el pie de página
+    o un "1." suelto no suman. Si una sección no tiene numeración (un único
+    dictamen, por ejemplo), queda sin el campo: mejor nada que un número falso.
     """
-    async with _client() as c:
-        r = await c.get(AGENDA_PLENO_URL)
-        if r.status_code != 200:
-            return {"error": "No se pudo obtener la lista de agendas del Pleno."}
-        soup = BeautifulSoup(r.text, "html.parser")
+    nombres = {}
+    for e in estructura:
+        nombres[_sin_acentos(e["seccion"]).strip()] = (e, None)
+        for sub in e.get("subsecciones", []):
+            nombres[_sin_acentos(sub["seccion"]).strip()] = (sub, e)
+    actual = padre = None
+    ultimo = 0
+    for linea in texto.split("\n"):
+        limpia = _sin_acentos(linea).strip()
+        if limpia in nombres:
+            # La numeración reinicia en cada sección y subsección.
+            (actual, padre), ultimo = nombres[limpia], 0
+            continue
+        m = re.match(r"^(\d{1,3})\.(\s|$)", limpia)
+        if actual is not None and m and int(m.group(1)) == ultimo + 1:
+            ultimo += 1
+            actual["asuntos"] = ultimo
+            if padre is not None:
+                padre["asuntos"] = padre.get("asuntos", 0) + 1
 
-        docs = [(a.get_text(strip=True), a["href"]) for a in soup.select("a[href]")
-                if "/Apleno/" in a.get("href", "") and a.get_text(strip=True)]
-        if not docs:
-            return {"error": "No se encontraron agendas del Pleno publicadas."}
 
-        titulo, enlace = docs[0]  # la más reciente
-        rd = await _get_oficial(c, enlace)
-        if rd is None:
-            return {"error": "La agenda del Pleno apunta fuera del Congreso; no se descargó."}
-        if rd.status_code != 200:
-            return {"error": "No se pudo descargar la agenda del Pleno."}
-
-    # El documento es un PDF servido directamente
-    def _leer_pdf(data):
-        import fitz
-        doc = fitz.open(stream=data, filetype="pdf")
-        return ("\n".join(page.get_text() for page in doc).strip(),
-                _parse_indice_agenda_pleno(doc))
-
-    try:
-        # fitz es síncrono: en un hilo para no frenar el event loop.
-        texto, estructura = await asyncio.to_thread(_leer_pdf, rd.content)
-    except Exception as _e:
-        logger.warning("agenda del Pleno: el PDF no se pudo leer, uso el texto HTML: %s", _e)
-        texto = BeautifulSoup(rd.text, "html.parser").get_text(separator="\n", strip=True)
-        estructura = []
-
-    resultado = {
-        "fuente": "Relatoría del Congreso — Agenda del Pleno",
-        "titulo": titulo,
-        "enlace": enlace,
-        "texto": texto[:8000],
-        "agendas_anteriores": [
-            {"titulo": t, "enlace": h} for t, h in docs[1:4]
-        ],
-    }
-
-    # Esta es la más reciente que el sistema de Relatoría tiene publicada —
-    # pero puede llevar semanas sin actualizarse (pasó con la transición a
-    # bicameralidad: el Pleno "viejo" dejó de tener sesiones nuevas mientras
-    # Senado/Diputados ya operaban por separado). Sin este aviso, el modelo
-    # puede presentar una agenda de hace semanas como si fuera la de "hoy".
-    fecha_doc = _fecha_desde_titulo_es(titulo)
+def _armar_agenda(fuente: str, titulo: str, enlace: str, texto: str,
+                  estructura: list, fecha_doc) -> dict:
+    resultado = {"fuente": fuente, "titulo": titulo, "enlace": enlace}
     if fecha_doc:
+        resultado["fecha"] = fecha_doc.strftime("%d/%m/%Y")
+        # Puede llevar semanas sin actualizarse: sin este aviso, el modelo
+        # presenta una agenda de hace semanas como si fuera la de "hoy".
         dias = (ahora_lima().date() - fecha_doc).days
         if dias > 14:
             resultado["advertencia_desactualizado"] = (
@@ -1890,31 +1962,124 @@ async def fetch_agenda_pleno():
                 f"como la agenda 'actual' o 'de esta semana' sin aclarar la fecha real "
                 f"y que no hay una más nueva publicada."
             )
-
     if estructura:
+        _contar_items_agenda(texto, estructura)
         resultado["estructura"] = estructura
         resultado["nota"] = (
             "\"estructura\" viene del ÍNDICE real del documento (sección → rango de "
-            "páginas), no de un conteo de palabras — es la fuente confiable para "
-            "responder \"cuántos X hay\". NO cuentes menciones de palabras en "
-            "\"texto\" para eso: una palabra como \"dictamen\" puede aparecer muchas "
-            "veces por cada asunto (título, referencias, pie de página), así que "
-            "contarla da un número inflado y falso. Si el usuario pide un número "
-            "exacto de ítems por sección y no está en \"estructura\", di que el "
-            "índice solo da el rango de páginas, no el conteo exacto de ítems, y "
-            "sugiere revisar el PDF directamente."
+            "páginas). \"asuntos\" es la cantidad de asuntos numerados (1., 2., ...) "
+            "de esa sección en el cuerpo del documento; si una sección no lo trae, no "
+            "tiene numeración y no hay un conteo confiable. NO cuentes menciones de "
+            "palabras en \"texto\": una palabra como \"dictamen\" aparece varias "
+            "veces por asunto y contarla da un número inflado y falso."
         )
     else:
-        # Fallback: no se pudo leer el índice — avisamos explícitamente en vez
-        # de devolver un conteo de palabras que parece preciso sin serlo.
         resultado["nota"] = (
             "No se pudo extraer el índice estructurado de este documento. NO "
             "inventes ni calcules conteos de dictámenes/mociones/etc a partir del "
             "texto — decile al usuario que no hay un conteo confiable disponible "
             "para esta agenda y dale el link para revisarla directamente."
         )
-
+    # Al final: si el orquestador recorta por largo, se pierde texto y no la
+    # estructura (pasó: el conteo de asuntos quedaba fuera de los 7000 chars).
+    resultado["texto"] = texto[:8000]
     return resultado
+
+
+async def _agenda_pleno_relatoria(c):
+    """Última agenda de la Relatoría del Congreso (la del iframe de agenda-del-pleno)."""
+    r = await c.get(AGENDA_PLENO_URL)
+    if r.status_code != 200:
+        return {"error": "No se pudo obtener la lista de agendas del Pleno."}
+    soup = BeautifulSoup(r.text, "html.parser")
+    docs = [(a.get_text(strip=True), a["href"]) for a in soup.select("a[href]")
+            if "/Apleno/" in a.get("href", "") and a.get_text(strip=True)]
+    if not docs:
+        return {"error": "No se encontraron agendas del Pleno publicadas."}
+
+    titulo, enlace = docs[0]  # la más reciente
+    rd = await _get_oficial(c, enlace)
+    if rd is None:
+        return {"error": "La agenda del Pleno apunta fuera del Congreso; no se descargó."}
+    if rd.status_code != 200:
+        return {"error": "No se pudo descargar la agenda del Pleno."}
+    try:
+        # fitz es síncrono: en un hilo para no frenar el event loop.
+        texto, estructura = await asyncio.to_thread(_leer_agenda_pdf, rd.content)
+    except Exception as _e:
+        logger.warning("agenda del Pleno: el PDF no se pudo leer, uso el texto HTML: %s", _e)
+        texto = BeautifulSoup(rd.text, "html.parser").get_text(separator="\n", strip=True)
+        estructura = []
+    resultado = _armar_agenda("Relatoría del Congreso — Agenda del Pleno", titulo, enlace,
+                              texto, estructura, _fecha_desde_titulo_es(titulo))
+    resultado = {"camara": "Congreso", **resultado}
+    resultado["agendas_anteriores"] = [{"titulo": t, "enlace": h} for t, h in docs[1:4]]
+    return resultado
+
+
+async def _agenda_pleno_camara(c, camara: str, url: str):
+    try:
+        agendas = await _agendas_de_camara(c, url)
+        if not agendas:
+            return None
+        fecha, enlace = agendas[0]
+        rd = await _get_oficial(c, enlace)
+        if rd is None or rd.status_code != 200:
+            return None
+        texto, estructura = await asyncio.to_thread(_leer_agenda_pdf, rd.content)
+    except Exception as _e:
+        logger.warning("agenda del Pleno de %s: %s: %s", camara, type(_e).__name__, _e)
+        return None
+    resultado = _armar_agenda(f"{camara} — Sesiones del Pleno ({url})",
+                              f"Agenda del Pleno de {camara} — sesión del {fecha.strftime('%d/%m/%Y')}",
+                              enlace, texto, estructura, fecha)
+    resultado = {"camara": camara, **resultado}
+    resultado["agendas_anteriores"] = [
+        {"titulo": f"Agenda del Pleno de {camara} — {f.strftime('%d/%m/%Y')}", "enlace": h}
+        for f, h in agendas[1:4]
+    ]
+    return resultado
+
+
+async def fetch_agenda_pleno():
+    """
+    Agenda del Pleno más reciente: la de la Cámara de Diputados, la del
+    Senado y la de la Relatoría del Congreso. Devuelve la más nueva arriba
+    (mismo formato de siempre) y las de las otras cámaras en
+    "otras_agendas". Los PDFs se leen con PyMuPDF y el índice da la
+    estructura por sección.
+    """
+    async with _client() as c:
+        resultados = await asyncio.gather(
+            _agenda_pleno_relatoria(c),
+            *[_agenda_pleno_camara(c, cam, url) for cam, url in AGENDAS_PLENO_CAMARAS.items()],
+            return_exceptions=True,
+        )
+    agendas = [r for r in resultados if isinstance(r, dict) and r.get("titulo")]
+    if not agendas:
+        primero = resultados[0]
+        return primero if isinstance(primero, dict) else {
+            "error": "No se pudo obtener la Agenda del Pleno."}
+
+    def _fecha(a):
+        try:
+            return datetime.strptime(a.get("fecha", ""), "%d/%m/%Y").date()
+        except ValueError:
+            return date.min
+
+    agendas.sort(key=_fecha, reverse=True)
+    principal, otras = agendas[0], agendas[1:]
+    texto = principal.pop("texto", "")
+    if otras:
+        # Solo lo necesario para mencionarlas: el texto completo de tres
+        # agendas no entra en el contexto del modelo.
+        principal["otras_agendas"] = [
+            {k: a[k] for k in ("camara", "titulo", "fecha", "enlace", "estructura",
+                               "advertencia_desactualizado") if k in a}
+            for a in otras
+        ]
+    principal["texto"] = texto  # siempre último, ver _armar_agenda
+    return principal
 
 
 # Nombres de sección tal como aparecen en el cuerpo del documento (en
@@ -1969,23 +2134,34 @@ def _parse_indice_agenda_pleno(doc) -> list:
             partes.insert(0, lineas[j])
             j -= 1
         nombre = " ".join(partes).strip()
+        # Las secciones llevan numeral romano ("I. Dictamen"); las líneas sin
+        # numeral que siguen son subsecciones ("Moción de interpelación"). Las
+        # agendas de Diputados y del Senado (2026) usan secciones que no
+        # existían en las del Congreso unicameral, así que el numeral manda y
+        # la lista fija solo cubre índices viejos sin numeral.
+        es_seccion = bool(re.match(r"^[IVX]+\.\s*", nombre))
         nombre = re.sub(r"^[IVX]+\.\s*", "", nombre)  # saca el numeral romano pegado
         nombre_norm = _sin_tildes(nombre).upper()
-        if nombre_norm in _SECCIONES_AGENDA_PLENO:
-            entradas.append((nombre, int(linea)))
+        if es_seccion or nombre_norm in _SECCIONES_AGENDA_PLENO:
+            entradas.append((nombre, int(linea), []))
+        elif entradas and nombre:
+            entradas[-1][2].append({"seccion": nombre, "pagina_inicio": int(linea)})
 
     if not entradas:
         return []
 
     # Página final = inicio de la siguiente sección menos 1 (o fin del doc).
     estructura = []
-    for idx, (nombre, inicio) in enumerate(entradas):
+    for idx, (nombre, inicio, subsecciones) in enumerate(entradas):
         fin = entradas[idx + 1][1] - 1 if idx + 1 < len(entradas) else len(doc)
-        estructura.append({
+        seccion = {
             "seccion": nombre,
             "pagina_inicio": inicio,
             "paginas": max(1, fin - inicio + 1),
-        })
+        }
+        if subsecciones:
+            seccion["subsecciones"] = subsecciones
+        estructura.append(seccion)
     return estructura
 
 
@@ -2205,6 +2381,8 @@ async def fetch_agenda_camaras(dias: int = 2, camara: str = None):
                         "organiza": organiza,
                         "lugar": lugar,
                         "camara": _detectar_camara(tema + " " + organiza + " " + lugar),
+                        "es_comision": _es_de_comision(tema + " " + organiza),
+                        "enlace": url,
                     })
                     i = j
                 else:
@@ -2220,8 +2398,15 @@ async def fetch_agenda_camaras(dias: int = 2, camara: str = None):
     sesiones_total = [s for dia_lista in resultados for s in dia_lista]
 
     if camara:
-        sesiones_total = [s for s in sesiones_total
-                          if camara.lower() in s["camara"].lower() or camara.lower() in s["tema"].lower()]
+        # Sin acentos: "comision" no matcheaba "Comisión" y el filtro de
+        # comisiones devolvía vacío.
+        pedido = _sin_acentos(camara)
+        if pedido.startswith("COMISI"):
+            sesiones_total = [s for s in sesiones_total if s["es_comision"]]
+        else:
+            sesiones_total = [s for s in sesiones_total
+                              if pedido in _sin_acentos(s["camara"])
+                              or pedido in _sin_acentos(s["tema"])]
 
     if not sesiones_total:
         return {
@@ -2237,11 +2422,18 @@ async def fetch_agenda_camaras(dias: int = 2, camara: str = None):
     }
 
 
+def _es_de_comision(texto: str) -> bool:
+    """Sesión, mesa o audiencia que organiza una comisión (de cualquier cámara)."""
+    return "COMISION" in _sin_acentos(texto)
+
+
 def _detectar_camara(texto: str) -> str:
     t = texto.lower()
-    if "senado" in t:
+    # "senad"/"diputad": las comisiones que preside una senadora o una
+    # diputada ("Presidenta: Diputada Flor Meza") quedaban sin cámara.
+    if "senad" in t:
         return "Senado"
-    if "diputado" in t:
+    if "diputad" in t:
         return "Cámara de Diputados"
     if "pleno" in t:
         return "Pleno del Congreso"
