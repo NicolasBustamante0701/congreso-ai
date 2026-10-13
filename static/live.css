@@ -431,7 +431,7 @@ html, body { height: 100%; font-family: var(--font); background: var(--bg); colo
 }
 @keyframes fade-in { from{opacity:0;transform:translateY(3px)} to{opacity:1;transform:none} }
 
-.lv-line-ts   { font-size: 11px; font-weight: 700; color: var(--dim); white-space: nowrap; padding-top: 2px; min-width: 36px; font-variant-numeric: tabular-nums; }
+.lv-line-ts   { font-size: 11px; font-weight: 700; color: var(--dim); white-space: nowrap; padding-top: 2px; min-width: 58px; font-variant-numeric: tabular-nums; }
 .lv-line-text { font-size: 13px; color: var(--text); line-height: 1.6; font-weight: 500; }
 
 /* Línea que corresponde a dónde va el reproductor ahora mismo — ver
@@ -475,3 +475,33 @@ html, body { height: 100%; font-family: var(--font); background: var(--bg); colo
 .lv-col-empty svg { width: 44px; height: 44px; opacity: 0.3; }
 .lv-col-empty p   { font-size: 12.5px; line-height: 1.7; }
 .lv-col-empty strong { color: var(--mid); }
+
+/* ── Transcripciones guardadas (barra lateral) ───────── */
+.lv-saved { border-bottom: 1px solid var(--border); padding: 6px 0 8px; max-height: 38%; overflow-y: auto; flex-shrink: 0; }
+.lv-saved-title { font-size: 10.5px; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase; color: var(--dim); padding: 4px 14px 6px; }
+.lv-saved-card { padding: 8px 14px; }
+.lv-saved-card .lv-card-title { margin: 0 0 3px; }
+.lv-saved-meta { display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 11px; color: var(--mid); font-variant-numeric: tabular-nums; }
+.lv-saved-del { border: none; background: none; color: var(--dim); font-size: 16px; line-height: 1; cursor: pointer; padding: 0 4px; border-radius: 4px; }
+.lv-saved-del:hover, .lv-saved-del:focus-visible { color: #c53030; background: var(--hover); }
+
+/* ── Marcas de tiempo que llevan al momento del video ── */
+.lv-ts-link { cursor: pointer; border-radius: 3px; }
+.lv-ts-link:hover, .lv-ts-link:focus-visible { color: var(--accent); text-decoration: underline; outline: none; }
+.lv-ia-segment-body .lv-ts-link { font-weight: 700; font-variant-numeric: tabular-nums; }
+.lv-ia-nota { font-weight: 500; color: var(--dim); margin-left: auto; }
+
+/* ── Preguntas sobre la sesión ───────────────────────── */
+.lv-qa { display: flex; gap: 6px; padding: 8px 10px; border-top: 1px solid var(--border); flex-shrink: 0; background: var(--bg); }
+.lv-qa input {
+  flex: 1; min-width: 0; padding: 7px 10px; font: 12.5px var(--font); color: var(--text);
+  background: var(--bg-off); border: 1px solid var(--border); border-radius: 7px; outline: none;
+}
+.lv-qa input:focus { border-color: var(--accent); }
+.lv-qa-btn {
+  padding: 6px 11px; font: 700 11.5px var(--font); color: var(--bg); background: var(--text);
+  border: 1px solid var(--text); border-radius: 7px; cursor: pointer; white-space: nowrap;
+}
+.lv-qa-btn--alt { color: var(--text); background: transparent; border-color: var(--border); }
+.lv-qa-btn:disabled { opacity: 0.5; cursor: default; }
+@media (prefers-reduced-motion: reduce) { .lv-qa-btn, .lv-ts-link { transition: none; } }

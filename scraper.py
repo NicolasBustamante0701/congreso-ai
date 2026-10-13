@@ -11,8 +11,10 @@ herramienta devuelve vacío en vez de rellenar con otra fuente.
 import asyncio
 import base64
 import logging
+import math
 import os
 import re
+import time
 import unicodedata
 import urllib.parse
 
@@ -1260,10 +1262,17 @@ def get_yt_captions(video_id: str):
     return None
 
 
-def transcribe_with_whisper(video_id: str, api_key: str, minutes: int = 10):
+def transcribe_with_whisper(video_id: str, api_key: str, minutes: int = 10,
+                            en_vivo: bool = False, cancelado=None):
     """
     Captura hasta `minutes` minutos de audio via ffmpeg+HLS y transcribe con Groq Whisper.
     Usa el mismo enfoque que el live transcriber: resolve URL con yt-dlp, captura con ffmpeg.
+
+    En un stream en vivo ffmpeg entra por el borde en vivo: lo capturado son
+    los PRÓXIMOS `minutes` minutos, no los últimos (antes el aviso decía
+    "últimos 5 min"). `cancelado` (threading.Event) corta la captura si el
+    usuario se fue: corre en un hilo y si no, ffmpeg seguía hasta 10 minutos
+    para nadie.
     """
     import subprocess
     import tempfile
@@ -1272,27 +1281,41 @@ def transcribe_with_whisper(video_id: str, api_key: str, minutes: int = 10):
 
     # Import diferido: live_transcriber importa de este módulo (ver
     # get_stream_url), así que a nivel de módulo sería circular.
-    from live_transcriber import ffmpeg_exe
+    from live_transcriber import ffmpeg_exe, resolver_audio
 
     seconds = minutes * 60
 
     # Resolver URL de audio sin descargar
     try:
-        info = _resolve_yt_info(video_id)
+        fuente = resolver_audio(video_id)
     except Exception as e:
         err = str(e)
         return {"ok": False, "error": f"No se pudo obtener el video de YouTube: {err[:200]}"}
-
-    fmts = info.get("requested_formats") or [info]
-    stream_url = fmts[0].get("url") or info.get("url", "")
-    if not stream_url:
-        return {"ok": False, "error": "No se pudo resolver la URL del audio."}
+    stream_url = fuente["url"]
 
     with tempfile.TemporaryDirectory() as tmp:
         out_path = os.path.join(tmp, "audio.wav")
+        entrada = stream_url
+        if fuente["fragmentos"]:
+            # VOD que fue transmisión en vivo: solo DASH por segmentos. La URL
+            # del formato da 5 s de audio (ver resolver_audio); se bajan los
+            # segmentos que cubren `minutes` a un archivo y ffmpeg lee de ahí.
+            n = max(1, math.ceil(seconds / (fuente["seg"] or 5)))
+            entrada = os.path.join(tmp, "audio.m4a")
+            try:
+                with httpx.Client(headers=fuente["headers"], timeout=30, follow_redirects=True) as hc, \
+                     open(entrada, "wb") as fh:
+                    for u in fuente["fragmentos"][:n]:
+                        if cancelado is not None and cancelado.is_set():
+                            return {"ok": False, "error": "Cancelado."}
+                        r = hc.get(u)
+                        r.raise_for_status()
+                        fh.write(r.content)
+            except Exception as e:
+                return {"ok": False, "error": f"No se pudo bajar el audio del video: {str(e)[:200]}"}
         cmd = [
             ffmpeg_exe(), "-y",
-            "-i", stream_url,
+            "-i", entrada,
             "-vn",
             "-ar", "16000",
             "-ac", "1",
@@ -1300,14 +1323,28 @@ def transcribe_with_whisper(video_id: str, api_key: str, minutes: int = 10):
             out_path,
         ]
         try:
-            result = subprocess.run(cmd, capture_output=True, timeout=seconds + 60)
-        except subprocess.TimeoutExpired:
-            return {"ok": False, "error": "Tiempo de espera agotado al capturar el audio."}
+            proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         except FileNotFoundError:
             return {"ok": False, "error": "ffmpeg no está instalado. Instálalo con: pip install imageio-ffmpeg"}
+        limite = time.monotonic() + seconds + 60
+        try:
+            while proc.poll() is None:
+                if cancelado is not None and cancelado.is_set():
+                    proc.kill()
+                    proc.wait(5)
+                    return {"ok": False, "error": "Cancelado."}
+                if time.monotonic() > limite:
+                    proc.kill()
+                    proc.wait(5)
+                    return {"ok": False, "error": "Tiempo de espera agotado al capturar el audio."}
+                time.sleep(0.5)
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+        stderr_txt = (proc.stderr.read() if proc.stderr else b"").decode(errors="ignore")
 
         if not os.path.exists(out_path) or os.path.getsize(out_path) < 4096:
-            stderr = result.stderr.decode(errors="ignore")[-300:]
+            stderr = stderr_txt[-300:]
             return {"ok": False, "error": f"No se pudo capturar el audio del video. {stderr}"}
 
         size_mb = os.path.getsize(out_path) / 1_000_000
@@ -1329,7 +1366,9 @@ def transcribe_with_whisper(video_id: str, api_key: str, minutes: int = 10):
             "ok": True,
             "text": text[:40000],
             "source": "whisper",
-            "nota": f"Transcripción de los primeros {minutes} min ({size_mb:.1f} MB de audio)",
+            "nota": (f"Transcripción de {minutes} min desde que empezó la captura en vivo"
+                     if en_vivo else f"Transcripción de los primeros {minutes} min")
+                    + f" ({size_mb:.1f} MB de audio)",
         }
 
 

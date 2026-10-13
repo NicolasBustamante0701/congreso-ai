@@ -16,6 +16,8 @@ import struct
 import threading
 import time
 
+from services.transcripts import fmt_ts
+
 # NOTE: Using YouTube streams via yt-dlp + ffmpeg may conflict with YouTube ToS
 # in a public production context. Fine for personal/dev use.
 
@@ -49,10 +51,22 @@ MAX_SESSION_SECONDS = 12 * 60 * 60  # 12 h — backstop, no límite operativo
 SILENCE_RMS_THRESHOLD = 400  # escala int16 (0-32767); ajustable si hace falta
 
 
-def get_stream_url(video_id: str) -> tuple:
+def resolver_audio(video_id: str) -> dict:
     """
-    Returns (stream_url, is_live).
-    Uses yt-dlp to resolve the best audio HLS URL.
+    Resuelve con yt-dlp de dónde sacar el audio. Devuelve:
+      url         URL para ffmpeg (HLS en vivo, o la del formato elegido)
+      is_live     transmitiéndose ahora
+      fragmentos  lista de URLs si el formato es DASH por segmentos, o None
+      headers     headers HTTP que pide YouTube para esos segmentos
+      seg         duración nominal de cada segmento, en segundos (o None)
+
+    Por qué los fragmentos: los videos que fueron transmisiones en vivo
+    (post_live) hoy solo se ofrecen como DASH por segmentos de ~5 s, cada
+    uno con su propia URL. Pasarle a ffmpeg la `url` del formato solo
+    entregaba el PRIMER segmento: medido, 5 s de audio y EOF — la
+    transcripción de un video grabado se cortaba a los 5 segundos, y el
+    seek (-ss) devolvía vacío. Con la lista se bajan los segmentos en orden
+    desde el que corresponde al segundo pedido.
 
     is_live = está transmitiéndose AHORA MISMO. OJO: esto NO es lo mismo
     que "was_live" (fue una transmisión en vivo pero ya terminó) — un video
@@ -77,12 +91,64 @@ def get_stream_url(video_id: str) -> tuple:
 
     is_live = bool(info.get("is_live"))
 
-    # Prefer the resolved URL from the selected format
-    fmts = info.get("requested_formats") or [info]
-    stream_url = fmts[0].get("url") or info.get("url", "")
+    fmts = info.get("requested_formats") or [
+        next((f for f in info.get("formats") or [] if f.get("format_id") == info.get("format_id")), info)]
+    f = fmts[0]
+    stream_url = f.get("url") or info.get("url", "")
     if not stream_url:
         raise ValueError("No se pudo resolver la URL del stream de YouTube.")
-    return stream_url, is_live
+    fragmentos = None
+    if f.get("protocol") == "http_dash_segments" and f.get("fragments") and not is_live:
+        fragmentos = [fr["url"] for fr in f["fragments"] if fr.get("url")]
+    return {
+        "url": stream_url,
+        "is_live": is_live,
+        "fragmentos": fragmentos or None,
+        "headers": f.get("http_headers") or info.get("http_headers") or {},
+        "seg": f.get("target_duration"),
+    }
+
+
+def get_stream_url(video_id: str) -> tuple:
+    """(url, is_live) — compatibilidad; para VOD usar resolver_audio()."""
+    r = resolver_audio(video_id)
+    return r["url"], r["is_live"]
+
+
+async def _alimentar_fragmentos(proc, fragmentos: list, headers: dict, estado: dict):
+    """
+    Baja los segmentos DASH en orden y se los pasa a ffmpeg por stdin.
+
+    Si un segmento falla tres veces se corta acá en vez de saltearlo: un
+    segmento faltante corre todos los tiempos siguientes (el reloj se
+    calcula por bytes de audio), y es mejor una transcripción más corta que
+    una con marcas de tiempo equivocadas. estado["error"] lo informa.
+    """
+    import httpx
+    try:
+        async with httpx.AsyncClient(headers=headers, timeout=30, follow_redirects=True) as c:
+            for i, url in enumerate(fragmentos):
+                for intento in range(3):
+                    try:
+                        r = await c.get(url)
+                        r.raise_for_status()
+                        break
+                    except Exception as e:
+                        if intento == 2:
+                            estado["error"] = (f"segmento {i} de {len(fragmentos)}: "
+                                               f"{type(e).__name__} {str(e)[:120]}")
+                            return
+                        await asyncio.sleep(1 + intento)
+                proc.stdin.write(r.content)
+                await proc.stdin.drain()
+                estado["bajados"] = i + 1
+    except (BrokenPipeError, ConnectionResetError):
+        pass   # ffmpeg ya cerró (cancelación): nada que hacer
+    finally:
+        try:
+            proc.stdin.close()
+        except Exception:
+            pass
 
 
 # Prompt de estilo para Whisper: sin esto, el modelo tiende a "limpiar" el habla
@@ -210,22 +276,40 @@ async def stream_transcription(video_id: str, api_key: str, start_seconds: int =
     seguir al usuario si adelantó/atrasó un video ya grabado en vez de
     transcribir siempre desde 0:00. Se ignora para streams en vivo.
     Yields:
-      {"status": "..."} — status updates
-      {"timestamp": "mm:ss", "text": "...", "elapsed": int} — transcription lines
-      {"error": "..."} — on failure
+      {"status": "..."} — avances
+      {"info": {"en_vivo": bool}} — una vez, apenas se resuelve el stream
+      {"timestamp": "HH:MM:SS", "text": "...", "elapsed": int, "ventana": {...}}
+          — ventana con texto
+      {"ventana": {"start_s", "end_s", "estado"}} — ventana sin texto
+          (silencio o error de Whisper)
+      {"error": "...", "fatal"?: True} — falla
     """
     loop = asyncio.get_event_loop()
 
     # ── Step 1: resolve stream URL ──────────────────────────────
     yield {"status": "Resolviendo URL del stream..."}
     try:
-        stream_url, is_live = await loop.run_in_executor(None, get_stream_url, video_id)
+        fuente = await loop.run_in_executor(None, resolver_audio, video_id)
     except Exception as e:
         yield {"error": f"No se pudo obtener el stream: {e}"}
         return
+    stream_url, is_live = fuente["url"], fuente["is_live"]
+    fragmentos = fuente["fragmentos"]
 
     kind = "live" if is_live else "video"
     start_seconds = max(0, start_seconds) if not is_live else 0
+    if fragmentos:
+        seg = fuente["seg"]
+        if seg and start_seconds:
+            # Se arranca en el borde del segmento que contiene el segundo
+            # pedido: así el reloj de la transcripción queda alineado.
+            primero = min(int(start_seconds // seg), len(fragmentos) - 1)
+            start_seconds = int(primero * seg)
+            fragmentos = fragmentos[primero:]
+        elif start_seconds:
+            yield {"status": "Este video no informa la duración de sus segmentos: se transcribe desde el inicio."}
+            start_seconds = 0
+    yield {"info": {"en_vivo": bool(is_live)}}
     yield {"status": f"Stream resuelto ({kind}). Iniciando captura de audio..."}
 
     # ── Step 2: ffmpeg emite PCM crudo continuo por stdout ──────
@@ -233,12 +317,12 @@ async def stream_transcription(video_id: str, api_key: str, start_seconds: int =
     # nadie lo leía — con el pipe lleno (64 KB, a los pocos minutos) ffmpeg se
     # bloqueaba y la transcripción moría en silencio. Además se drena abajo.
     cmd = [ffmpeg_exe(), "-y", "-nostats", "-loglevel", "error"]
-    if start_seconds:
+    if start_seconds and not fragmentos:
         # -ss ANTES de -i: seek de entrada, salta directo al segmento HLS
         # correspondiente en vez de descargar y descartar todo lo anterior.
         cmd += ["-ss", str(start_seconds)]
     cmd += [
-        "-i", stream_url,
+        "-i", "pipe:0" if fragmentos else stream_url,
         "-vn",                   # audio only
         "-ar", str(SAMPLE_RATE), # 16 kHz — Whisper optimal
         "-ac", "1",               # mono
@@ -251,9 +335,13 @@ async def stream_transcription(video_id: str, api_key: str, start_seconds: int =
 
     proc = await asyncio.create_subprocess_exec(
         *cmd,
+        stdin=asyncio.subprocess.PIPE if fragmentos else asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
+    descarga = {"error": None, "bajados": 0}
+    feeder_task = (asyncio.ensure_future(_alimentar_fragmentos(proc, fragmentos, fuente["headers"], descarga))
+                   if fragmentos else None)
 
     logger.info("ffmpeg pid=%s para %s (%s, desde %ss)", proc.pid, video_id, kind, start_seconds)
     yield {"status": "Capturando audio... (primera transcripción en ~10 s)"}
@@ -337,13 +425,16 @@ async def stream_transcription(video_id: str, api_key: str, start_seconds: int =
             while len(buf) >= WINDOW_BYTES:
                 window = bytes(buf[:WINDOW_BYTES])
                 elapsed = start_seconds + chunk_index * CHUNK_SECONDS
-                ts = f"{elapsed // 60:02d}:{elapsed % 60:02d}"
+                fin = elapsed + CHUNK_SECONDS
+                ts = fmt_ts(elapsed)
+                estado = "ok"
 
                 if _is_silence(window):
                     # Sin señal real: NO llamamos a Whisper. Si le mandás
                     # silencio igual te devuelve texto (alucina despedidas,
                     # relleno, frases repetidas) — mejor no decir nada.
                     text = ""
+                    estado = "silencio"
                 else:
                     try:
                         text = await loop.run_in_executor(None, _transcribe_pcm, window, api_key)
@@ -354,21 +445,31 @@ async def stream_transcription(video_id: str, api_key: str, start_seconds: int =
                         # volcado del SDK en vez de saber qué le falta.
                         if _es_error_de_key(exc):
                             yield {"error": (
-                                "La GROQ_API_KEY no es válida o falta. La transcripción "
-                                "en vivo usa Whisper de Groq siempre, aunque el chat esté "
-                                "configurado con otro proveedor. Completá GROQ_API_KEY en "
-                                "el archivo .env y reiniciá la app."
-                            )}
+                                "La key de Groq no es válida o falta. La transcripción "
+                                "usa Whisper de Groq siempre, aunque el chat esté "
+                                "configurado con otro proveedor. Pegala en Ajustes de IA "
+                                "(campo de Groq para transcribir)."
+                            ), "fatal": True}
                             abortar = True
                             break
                         yield {"error": f"Error al transcribir el tramo {ts}: {exc}"}
                         text = ""
+                        estado = "error"
 
+                visible = ""
                 if text:
                     visible = _merge_overlap(prev_text, text)
                     prev_text = text
-                    if visible.strip():
-                        yield {"timestamp": ts, "text": visible, "elapsed": elapsed}
+                    if not visible.strip():
+                        estado = "silencio"   # todo era repetición del solape
+                # Cada ventana sale con su intervalo y estado, tenga texto o
+                # no: quien persiste (routers/live.py) necesita las de
+                # silencio y error para saber qué partes están cubiertas.
+                ventana = {"start_s": elapsed, "end_s": fin, "estado": estado}
+                if visible.strip():
+                    yield {"timestamp": ts, "text": visible, "elapsed": elapsed, "ventana": ventana}
+                else:
+                    yield {"ventana": ventana}
 
                 # Avanza CHUNK_SECONDS y conserva OVERLAP_SECONDS como cola
                 # para la próxima ventana.
@@ -380,6 +481,10 @@ async def stream_transcription(video_id: str, api_key: str, start_seconds: int =
 
         # Salimos del while por EOF (sin cancelación) — chequea si fue un error real.
         await proc.wait()
+        if descarga["error"]:
+            hasta = fmt_ts(start_seconds + chunk_index * CHUNK_SECONDS)
+            yield {"error": f"Se cortó la descarga del audio cerca de {hasta} ({descarga['error']}). "
+                            "Lo anterior quedó guardado; podés retomar desde ahí."}
         if proc.returncode not in (0, None):
             try:
                 await asyncio.wait_for(stderr_task, timeout=2)
@@ -397,8 +502,9 @@ async def stream_transcription(video_id: str, api_key: str, start_seconds: int =
         # desconectó, cada await de acá vuelve a recibir CancelledError y lo
         # que siga no corre (visto en pruebas: ffmpeg moría pero el watchdog
         # nunca se enteraba).
-        for task in (reader_task, stderr_task):
-            task.cancel()
+        for task in (reader_task, stderr_task, feeder_task):
+            if task is not None:
+                task.cancel()
         if proc.returncode is None:
             proc.terminate()
         try:

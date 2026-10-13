@@ -6,7 +6,7 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 
 from config import GROQ_API_KEY, logger, static_file
 from live_transcriber import stream_transcription
-from services import llm, sse
+from services import llm, sse, transcripts
 from services.prompt_registry import LIVE_ANALYSIS_PROMPT
 
 router = APIRouter()
@@ -27,11 +27,50 @@ async def live_page():
 @router.get("/live/transcribe")
 async def live_transcribe(request: Request,
                            video_id: str = Query(..., description="ID del video de YouTube"),
-                           start: int = Query(0, ge=0, description="Segundo del video donde arrancar")):
-    """SSE que emite líneas de transcripción en tiempo real."""
+                           start: int = Query(0, ge=0, description="Segundo del video donde arrancar"),
+                           titulo: str = Query("", max_length=300)):
+    """
+    SSE que emite líneas de transcripción en tiempo real y las guarda.
+
+    Cada ventana se persiste apenas llega (services/transcripts.py): si se
+    cierra la app o se corta la conexión, lo ya transcrito queda.
+    """
+    estado = {"offset": 0, "en_vivo": False, "persistir": True}
+
+    def procesar(item: dict) -> dict | None:
+        """Guarda lo que corresponda y devuelve el evento para el cliente (o None)."""
+        if "info" in item:
+            estado["en_vivo"] = item["info"]["en_vivo"]
+            try:
+                if estado["en_vivo"]:
+                    # En vivo, ffmpeg cuenta desde 0 en cada captura: se sigue
+                    # la numeración desde lo último guardado para que una
+                    # reconexión no pise lo anterior.
+                    estado["offset"] = transcripts.offset_captura(video_id)
+                transcripts.iniciar_sesion(video_id, titulo, en_vivo=estado["en_vivo"])
+            except Exception:
+                logger.exception("no se pudo iniciar la sesión guardada de %s", video_id)
+                estado["persistir"] = False
+            return {"info": {"en_vivo": estado["en_vivo"], "offset": estado["offset"]}}
+
+        v = item.pop("ventana", None)
+        off = estado["offset"]
+        if v is not None and estado["persistir"]:
+            try:
+                transcripts.guardar_ventana(video_id, v["start_s"] + off, v["end_s"] + off,
+                                            item.get("text", ""), v["estado"])
+            except Exception:
+                # La transcripción sigue en pantalla aunque no se pueda guardar.
+                logger.exception("no se pudo guardar la ventana %s de %s", v, video_id)
+        if "text" in item:
+            item["elapsed"] = item["elapsed"] + off
+            item["timestamp"] = transcripts.fmt_ts(item["elapsed"])
+            return item
+        return item if ("status" in item or "error" in item) else None
+
     async def generate():
         if not GROQ_API_KEY:
-            yield sse.error("Falta la GROQ_API_KEY")
+            yield sse.error("Falta la key de Groq para transcribir. Pegala en Ajustes de IA.")
             return
         if not video_id:
             yield sse.error("Falta el parámetro video_id")
@@ -91,7 +130,9 @@ async def live_transcribe(request: Request,
                     next_task = None
                     break
                 next_task = None
-                yield sse.event(item)
+                ev = procesar(item)
+                if ev is not None:
+                    yield sse.event(ev)
                 if await request.is_disconnected():
                     break
         except Exception as e:
@@ -108,6 +149,11 @@ async def live_transcribe(request: Request,
             # stream_transcription() que mata el proceso ffmpeg, sin depender
             # de que la cancelación por desconexión se propague sola.
             await gen.aclose()
+            if estado["persistir"]:
+                try:
+                    transcripts.marcar_estado(video_id, "detenida")
+                except Exception:
+                    logger.exception("no se pudo cerrar la sesión guardada de %s", video_id)
         yield sse.DONE
 
     return StreamingResponse(generate(), media_type="text/event-stream",

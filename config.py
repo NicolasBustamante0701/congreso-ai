@@ -43,6 +43,23 @@ def _log_dir() -> Path:
 LOG_FILE = _log_dir() / "server.log"
 
 
+def _data_dir() -> Path:
+    """
+    Datos persistentes del usuario (transcripciones). Nunca dentro del bundle:
+    Resources/ de un .app puede ser de solo lectura y se reemplaza al
+    actualizar. Electron pasa su userData en DIANA_DATA_DIR.
+    """
+    if os.getenv("DIANA_DATA_DIR"):
+        return Path(os.environ["DIANA_DATA_DIR"])
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "Diana"
+    return Path(os.getenv("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "diana"
+
+
+DATA_DIR = _data_dir()
+DB_FILE = DATA_DIR / "diana.db"
+
+
 def _setup_logging() -> None:
     root = logging.getLogger()
     root.setLevel(logging.INFO)

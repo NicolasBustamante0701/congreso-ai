@@ -23,7 +23,17 @@ from config import (
     STATIC_DIR,
     logger,
 )
-from routers import chat, expediente, export, live, pages, pdfs, sesiones, settings
+from routers import (
+    chat,
+    expediente,
+    export,
+    live,
+    pages,
+    pdfs,
+    sesiones,
+    settings,
+    transcripts,
+)
 from services import llm
 from services.observability import RequestContextMiddleware
 
@@ -51,7 +61,7 @@ def create_app() -> FastAPI:
     app.add_middleware(RequestContextMiddleware)
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-    for module in (pages, chat, sesiones, live, pdfs, export, expediente, settings):
+    for module in (pages, chat, sesiones, live, transcripts, pdfs, export, expediente, settings):
         app.include_router(module.router)
 
     return app

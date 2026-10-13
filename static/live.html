@@ -35,6 +35,12 @@
       </button>
     </div>
 
+    <!-- Transcripciones ya hechas: se abren sin volver a procesar el video -->
+    <div class="lv-saved" id="lv-saved" style="display:none">
+      <div class="lv-saved-title">Guardadas</div>
+      <div class="lv-saved-list" id="lv-saved-list"></div>
+    </div>
+
     <div class="lv-video-list" id="lv-video-list">
       <div class="lv-list-loading" id="lv-list-loading">
         <span class="lv-dot-loader"></span>
@@ -133,6 +139,15 @@
           <span>Próximo análisis en <strong id="lv-ia-countdown">60</strong>s</span>
           <button id="lv-ia-now-btn">Analizar ahora</button>
         </div>
+        <!-- Preguntas sobre lo transcrito + informe final (ver /transcripts) -->
+        <form class="lv-qa" id="lv-qa" style="display:none" autocomplete="off">
+          <input id="lv-qa-input" type="text" maxlength="1000"
+                 placeholder="Preguntá sobre esta sesión… (ej. ¿qué se dijo del presupuesto?)"
+                 aria-label="Pregunta sobre la sesión">
+          <button type="submit" id="lv-qa-send" class="lv-qa-btn">Preguntar</button>
+          <button type="button" id="lv-informe-btn" class="lv-qa-btn lv-qa-btn--alt"
+                  title="Informe con resumen, temas, cronología e índice temporal">Informe</button>
+        </form>
       </section>
 
       <!-- Columna 3: Transcripción -->
@@ -179,6 +194,7 @@
 <script src="/static/marked.min.js"></script>
 <script src="/static/purify.min.js"></script>
 <script src="/static/md.js"></script>
+<script src="/static/sse.js"></script>
 <script src="/static/live.js"></script>
 </body>
 </html>

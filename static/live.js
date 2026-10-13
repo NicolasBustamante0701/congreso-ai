@@ -218,6 +218,9 @@ function selectVideo(id, title, isLive) {
   // Show start button
   startBtn.style.display = "";
   stopBtn.style.display  = "none";
+  qaForm.style.display = "none";
+
+  abrirGuardada(id);
 }
 
 /* ── Transcription controls ──────────────────────────── */
@@ -261,23 +264,45 @@ function startTranscription() {
  */
 function openTranscriptionStream(startSec) {
   if (es) es.close();
+  // El título va para que la sesión quede guardada con nombre (ver
+  // routers/live.py, que persiste cada ventana apenas se transcribe).
   es = new EventSource(
-    `/live/transcribe?video_id=${encodeURIComponent(currentVideoId)}&start=${startSec}`
+    `/live/transcribe?video_id=${encodeURIComponent(currentVideoId)}&start=${startSec}` +
+    `&titulo=${encodeURIComponent(videoTitleLabel.textContent || "")}`
   );
 
   es.onmessage = (e) => {
     if (e.data === "[DONE]") {
       if (es) { es.close(); es = null; }
-      setStatus("Transmisión terminada.", "idle");
       stopBtn.style.display  = "none";
       startBtn.style.display = "";
       stopCountdown();
+      cargarGuardadas();
+      if (!userStopped && transcript.length) {
+        // Terminó el video: el informe final sale solo, con lo transcrito.
+        setStatus("Transcripción terminada. Armando el informe final…", "transcribing");
+        generarInforme();
+      } else {
+        setStatus("Transcripción terminada.", "idle");
+      }
       return;
     }
     try {
       const d = JSON.parse(e.data);
+      if (d.info) {
+        currentIsLive = !!d.info.en_vivo;
+        qaForm.style.display = "";
+      }
       if (d.status) setStatus(d.status, d.status.toLowerCase().includes("transcrib") ? "transcribing" : "live");
-      if (d.error)  setStatus("Error: " + d.error, "idle");
+      if (d.error) {
+        setStatus("Error: " + d.error, "idle");
+        if (d.fatal) {
+          // Key inválida: reconectar repetiría el mismo error.
+          stopTranscription(false);
+          stopBtn.style.display  = "none";
+          startBtn.style.display = "";
+        }
+      }
       if (d.text) {
         // Conexión sana: cualquier línea real que llegue resetea el
         // contador de reintentos, para no gastar el cupo de reconexión
@@ -316,9 +341,11 @@ function openTranscriptionStream(startSec) {
 }
 
 function stopTranscription(resetUI = true) {
+  const estabaCorriendo = !!es;
   userStopped = true;
   if (es) { es.close(); es = null; }
   stopCountdown();
+  if (estabaCorriendo) setTimeout(cargarGuardadas, 600);   // el server cierra la sesión al desconectarse
   if (resetUI) {
     stopBtn.style.display  = "none";
     startBtn.style.display = "";
@@ -342,7 +369,11 @@ function addLine(ts, text, elapsed) {
   const line = document.createElement("div");
   line.className = "lv-line";
   if (typeof elapsed === "number") line.dataset.elapsed = String(elapsed);
-  line.innerHTML = `<span class="lv-line-ts">[${ts}]</span><span class="lv-line-text">${escHtml(text)}</span>`;
+  const seekable = typeof elapsed === "number" && !currentIsLive;
+  line.innerHTML = (seekable
+    ? `<span class="lv-line-ts lv-ts-link" role="button" tabindex="0" data-s="${elapsed}" title="Ir a este momento del video">[${ts}]</span>`
+    : `<span class="lv-line-ts">[${ts}]</span>`) +
+    `<span class="lv-line-text">${escHtml(text)}</span>`;
   linesEl.appendChild(line);
   if (autoScroll) transcriptBody.scrollTop = transcriptBody.scrollHeight;
 }
@@ -581,5 +612,173 @@ stopBtn.addEventListener("click",  () => stopTranscription(true));
 iaNowBtn.addEventListener("click", () => { runAnalysis(); countdown = 60; iaCountdown.textContent = 60; });
 refreshBtn.addEventListener("click", loadVideos);
 
+/* ── Transcripciones guardadas, preguntas e informe ─────
+   Todo trabaja sobre lo ya transcrito (backend /transcripts): abrir una
+   sesión guardada o preguntarle algo no vuelve a procesar el video. */
+const savedBox   = $("lv-saved");
+const savedList  = $("lv-saved-list");
+const qaForm     = $("lv-qa");
+const qaInput    = $("lv-qa-input");
+const qaSend     = $("lv-qa-send");
+const informeBtn = $("lv-informe-btn");
+let qaHistorial  = [];
+let qaOcupado    = false;
+
+async function cargarGuardadas() {
+  try {
+    const r = await fetch("/transcripts");
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const { sesiones } = await r.json();
+    savedList.innerHTML = "";
+    savedBox.style.display = sesiones.length ? "" : "none";
+    for (const ses of sesiones) {
+      const card = document.createElement("div");
+      card.className = "lv-video-card lv-saved-card";
+      card.dataset.id = ses.video_id;
+      card.innerHTML = `
+        <div class="lv-card-title">${escHtml(ses.titulo || ses.video_id)}</div>
+        <div class="lv-saved-meta">
+          <span>${ses.en_vivo ? "en vivo · " : ""}hasta ${escHtml(ses.hasta)}${ses.tiene_informe ? " · informe" : ""}</span>
+          <button class="lv-saved-del" title="Borrar esta transcripción" aria-label="Borrar transcripción">×</button>
+        </div>`;
+      card.addEventListener("click", (e) => {
+        if (e.target.closest(".lv-saved-del")) return;
+        selectVideo(ses.video_id, ses.titulo || ses.video_id, ses.en_vivo);
+      });
+      card.querySelector(".lv-saved-del").addEventListener("click", async (e) => {
+        e.stopPropagation();
+        if (!confirm(`¿Borrar la transcripción guardada de "${ses.titulo || ses.video_id}"? No se puede deshacer.`)) return;
+        await fetch(`/transcripts/${encodeURIComponent(ses.video_id)}`, { method: "DELETE" });
+        if (ses.video_id === currentVideoId) qaForm.style.display = "none";
+        cargarGuardadas();
+      });
+      savedList.appendChild(card);
+    }
+  } catch (err) {
+    console.warn("no se pudieron cargar las transcripciones guardadas:", err);
+  }
+}
+
+/* Pinta en la columna de transcripción lo que ya estaba guardado. */
+async function abrirGuardada(id) {
+  qaHistorial = [];
+  let datos;
+  try {
+    const r = await fetch(`/transcripts/${encodeURIComponent(id)}`);
+    if (r.status === 404) return;            // nunca se transcribió: nada que mostrar
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    datos = await r.json();
+  } catch (err) {
+    console.warn("no se pudo abrir la transcripción guardada:", err);
+    return;
+  }
+  if (id !== currentVideoId || es) return;   // el usuario ya cambió de video o arrancó otra captura
+  currentIsLive = !!datos.sesion.en_vivo;
+  for (const seg of datos.segmentos) addLine(seg.ts, seg.texto, seg.start_s);
+  lastElapsedSeconds = datos.segmentos.length ? datos.segmentos[datos.segmentos.length - 1].end_s : 0;
+  const c = datos.cobertura;
+  setStatus(`Guardada: ${c.desde} – ${c.hasta}` + (c.huecos.length ? ` · ${c.huecos.length} tramo(s) sin procesar` : ""), "idle");
+  qaForm.style.display = datos.segmentos.length ? "" : "none";
+  if (datos.sesion.informe) {
+    mostrarBloque("Informe final", datos.sesion.informe, `generado ${datos.sesion.informe_generado}`);
+  }
+}
+
+/* Bloque en la columna de Diana (pregunta o informe), con tablas y
+   marcas de tiempo clicables. */
+function mostrarBloque(titulo, texto, nota) {
+  iaEmpty.style.display   = "none";
+  iaContent.style.display = "";
+  iaActions.style.display = "";
+  const bloque = document.createElement("div");
+  bloque.className = "lv-ia-segment";
+  bloque.innerHTML = `
+    <div class="lv-ia-segment-range"><span>${escHtml(titulo)}</span>${nota ? `<span class="lv-ia-nota">${escHtml(nota)}</span>` : ""}</div>
+    <div class="lv-ia-segment-body"></div>`;
+  iaContent.appendChild(bloque);
+  const body = bloque.querySelector(".lv-ia-segment-body");
+  const pintar = (md) => { body.innerHTML = renderMd(md); enlazarTiempos(body); };
+  if (texto) pintar(texto);
+  iaBody.scrollTop = iaBody.scrollHeight;
+  return { body, pintar };
+}
+
+/* "[00:24:10]" → botón que lleva el reproductor a ese segundo. El HTML ya
+   pasó por DOMPurify: el patrón solo matchea dígitos, así que el reemplazo
+   no puede inyectar nada. En vivo no hay segundo de video al cual ir. */
+function enlazarTiempos(el) {
+  if (currentIsLive) return;
+  el.innerHTML = el.innerHTML.replace(/\[(\d{2}):(\d{2}):(\d{2})\]/g, (m, h, mi, se) => {
+    const seg = (+h) * 3600 + (+mi) * 60 + (+se);
+    return `<span class="lv-ts-link" role="button" tabindex="0" data-s="${seg}" title="Ir a este momento del video">${m}</span>`;
+  });
+}
+
+function irAlSegundo(seg) {
+  if (!Number.isFinite(seg)) return;
+  try {
+    if (ytPlayer && typeof ytPlayer.seekTo === "function") ytPlayer.seekTo(seg, true);
+  } catch (_) { /* reproductor no listo */ }
+}
+
+document.addEventListener("click", (e) => {
+  const t = e.target.closest(".lv-ts-link");
+  if (t) irAlSegundo(Number(t.dataset.s));
+});
+document.addEventListener("keydown", (e) => {
+  if ((e.key === "Enter" || e.key === " ") && e.target.classList?.contains("lv-ts-link")) {
+    e.preventDefault();
+    irAlSegundo(Number(e.target.dataset.s));
+  }
+});
+
+async function consultarStream(url, body, titulo) {
+  const { pintar } = mostrarBloque(titulo, "", "");
+  pintar("_Revisando la transcripción…_");
+  let texto = "";
+  iaSpinner.style.display = "";
+  try {
+    await DianaSSE.post(url, body, {
+      onEvent(obj) {
+        if (obj.error)  { pintar(`${texto}\n\n**Error:** ${obj.error}`); return false; }
+        if (obj.status && !texto) pintar(`_${obj.status}_`);
+        if (obj.text)   { texto += obj.text; pintar(texto); }
+      },
+    });
+  } catch (err) {
+    pintar(`${texto}\n\n**Error de conexión:** ${err.message}`);
+  } finally {
+    iaSpinner.style.display = "none";
+  }
+  if (texto) lastAnalysisText += `${lastAnalysisText ? "\n\n" : ""}## ${titulo}\n${texto}`;
+  return texto;
+}
+
+qaForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const pregunta = qaInput.value.trim();
+  if (!pregunta || qaOcupado || !currentVideoId) return;
+  qaOcupado = true; qaSend.disabled = true; qaInput.value = "";
+  const respuesta = await consultarStream(
+    `/transcripts/${encodeURIComponent(currentVideoId)}/preguntar`,
+    { pregunta, historial: qaHistorial }, `Pregunta: ${pregunta}`);
+  if (respuesta) {
+    qaHistorial.push({ role: "user", content: pregunta }, { role: "assistant", content: respuesta });
+    qaHistorial = qaHistorial.slice(-6);
+  }
+  qaOcupado = false; qaSend.disabled = false; qaInput.focus();
+});
+
+async function generarInforme() {
+  if (qaOcupado || !currentVideoId) return;
+  qaOcupado = true; informeBtn.disabled = true;
+  await consultarStream(`/transcripts/${encodeURIComponent(currentVideoId)}/informe`, {}, "Informe final");
+  qaOcupado = false; informeBtn.disabled = false;
+  if (!es) setStatus("Informe listo.", "idle");
+  cargarGuardadas();
+}
+informeBtn.addEventListener("click", generarInforme);
+
 /* ── Init ────────────────────────────────────────────── */
 loadVideos();
+cargarGuardadas();

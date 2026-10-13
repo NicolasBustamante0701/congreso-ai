@@ -1,5 +1,7 @@
 """Rutas de sesiones: listado de videos, transcripción y resumen."""
 import asyncio
+import functools
+import threading
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
@@ -76,16 +78,21 @@ async def sesiones_resumir(request: Request):
                 return
 
             minutes = 5 if en_vivo else 10
-            label = (f"los últimos {minutes} min del stream en vivo" if en_vivo
+            label = (f"los próximos {minutes} min del stream en vivo" if en_vivo
                      else f"los primeros {minutes} min")
             yield sse.status(
                 f"No hay subtítulos. Descargando audio ({label})... esto toma ~2 minutos."
             )
 
+            cancelado = threading.Event()
             try:
                 tr = await loop.run_in_executor(
-                    None, transcribe_with_whisper, video_id, GROQ_API_KEY, minutes
+                    None, functools.partial(transcribe_with_whisper, video_id, GROQ_API_KEY,
+                                            minutes, en_vivo=en_vivo, cancelado=cancelado)
                 )
+            except (asyncio.CancelledError, GeneratorExit):
+                cancelado.set()   # el cliente se fue: que ffmpeg no siga capturando
+                raise
             except Exception as e:
                 logger.exception("Whisper falló para %s", video_id)
                 yield sse.error(f"No se pudo transcribir el audio: {str(e)[:200]}")
@@ -107,7 +114,8 @@ async def sesiones_resumir(request: Request):
         async for ev in _stream_resumen(titulo, tr["text"]):
             yield ev
 
-    return StreamingResponse(generate(), media_type="text/event-stream")
+    return StreamingResponse(sse.vigilar_desconexion(request, generate()),
+                             media_type="text/event-stream")
 
 
 @router.post("/sesiones/resumir-texto")

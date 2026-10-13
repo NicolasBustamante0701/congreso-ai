@@ -37,6 +37,7 @@ a = Analysis(
         'routers.pdfs',
         'routers.sesiones',
         'routers.settings',
+        'routers.transcripts',
         'services',
         'services.docx',
         'services.llm',
@@ -46,6 +47,9 @@ a = Analysis(
         'services.prompt_registry',
         'services.sse',
         'services.tools',
+        'services.tool_cache',
+        'services.transcripts',
+        'sqlite3',
         'openai',
         # ffmpeg_exe() lo importa dentro de la función, así que PyInstaller no
         # lo ve por análisis estático.
