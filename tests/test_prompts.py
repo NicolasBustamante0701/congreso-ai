@@ -7,7 +7,12 @@ from pathlib import Path
 import pytest
 
 from config import PROMPTS_DIR
-from services.prompt_registry import SYSTEM_MINI, WORKFLOWS, resumen_con_fechas, system_con_fecha
+from services.prompt_registry import (
+    SYSTEM_MINI,
+    WORKFLOWS,
+    resumen_con_fechas,
+    system_con_fecha,
+)
 
 HOY, DESDE = "12/10/2026", "05/10/2026"
 TODOS = sorted(Path(PROMPTS_DIR).glob("*.md"))
