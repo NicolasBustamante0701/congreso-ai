@@ -96,7 +96,7 @@ Formato exacto:
 
 # RESUMEN EJECUTIVO — CONGRESO DEL PERÚ
 **Semana del {desde} al {hoy}**
-Preparado por: Solón — Sistema de Monitoreo Parlamentario
+Preparado por: Diana — Sistema de Monitoreo Parlamentario
 
 ---
 

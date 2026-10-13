@@ -931,9 +931,9 @@ async def fetch_destacados():
             )
 
     if not camaras:
-        # Las 3 cámaras fallaron: fallback a noticias de prensa, solo de la
-        # última semana (el índice de Google devuelve resultados de meses
-        # atrás que terminaban citados como actividad de la semana en curso).
+        # Las 3 cámaras fallaron: fallback a la sala de prensa oficial del
+        # Congreso (comunicaciones.congreso.gob.pe), solo de la última semana
+        # para que notas viejas no se citen como actividad de esta semana.
         logger.warning("Scrape de destacados falló en las 3 cámaras: %s", fallidas)
         noticias = await _noticias_congreso(
             "congreso perú noticias destacados sesión pleno ley",

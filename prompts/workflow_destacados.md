@@ -51,7 +51,8 @@ no las inventes, no las reemplaces por la home del Congreso.
 ### Reglas
 
 - Si hay `noticias_relacionadas`, preséntalas en una sección aparte y rotúlalas
-  claramente como noticias de prensa, nunca como documentos oficiales.
+  como notas de la sala de prensa del Congreso: informan, pero no son
+  documentos oficiales (no son dictámenes, actas ni agendas).
 - El resumen que pide el usuario va **antes** de las tablas: 2-3 líneas sobre qué
   hay disponible hoy, mencionando de qué cámara(s) es cada cosa.
 - Cierra ofreciendo algo concreto, por ejemplo abrir la agenda del Pleno vigente
