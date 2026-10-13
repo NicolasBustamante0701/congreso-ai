@@ -172,9 +172,16 @@ _PROVIDERS = {
     "mistral": {
         "base_url":     "https://api.mistral.ai/v1",
         "api_key":      os.getenv("MISTRAL_API_KEY", ""),
-        "router_model": "mistral-small-latest",
-        "main_model":   "mistral-medium-latest",
-        "modelos_respaldo": ["mistral-small-latest"],
+        # Verificado el 13/10/2026 con una key del plan gratis: small y medium
+        # daban 429 permanente y large 403 ("not available in your
+        # subscription tier"); estos tres responden y llaman herramientas.
+        "router_model": "open-mistral-nemo",
+        "main_model":   "ministral-14b-latest",
+        "modelos_respaldo": ["open-mistral-nemo", "ministral-8b-latest"],
+        # Modelos chicos: con 0.4 inventaban datos (un año para una ley, que
+        # el Pleno "aprobó" algo que solo estaba agendado). Más bajo, se pegan
+        # más al texto de las herramientas.
+        "temperatura": 0.1,
     },
     "openai": {
         "base_url":     None,  # SDK usa el endpoint oficial por default

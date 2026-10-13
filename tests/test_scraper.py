@@ -152,3 +152,21 @@ def test_contar_items_agenda_reinicia_por_subseccion():
     assert subs[0]["asuntos"] == 2
     assert subs[1]["asuntos"] == 3  # "5." no es correlativo
     assert estructura[0]["asuntos"] == 5
+
+
+@pytest.mark.parametrize("texto,codigo", [
+    ("diputados", "D"), ("Cámara de Diputados", "D"), ("SENADO", "S"),
+    ("congreso", "C"), ("", None), ("pleno", None),
+])
+def test_codigo_camara(texto, codigo):
+    from scraper import _codigo_camara
+    assert _codigo_camara(texto) == codigo
+
+
+def test_herramienta_ignora_argumentos_inventados():
+    from services.tools import _solo
+
+    def f(dias=None, camara=None):
+        return None
+
+    assert _solo({"dias": 7, "camara": "senado", "inventado": 1}, f) == {"dias": 7, "camara": "senado"}

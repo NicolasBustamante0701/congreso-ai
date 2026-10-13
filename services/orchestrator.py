@@ -323,6 +323,76 @@ NUM_PROYECTO_RE = re.compile(r"\b(\d{1,5})\s*[-/]\s*(\d{4})(?:\s*-?\s*\d{4})?\s*
 LINK_CONGRESO_RE = re.compile(r"https?://[^\s)\]>\"'`]*congreso\.gob\.pe[^\s)\]>\"'`]*")
 
 
+# Portales oficiales que el modelo puede sugerir aunque no vengan en los datos
+# (verificados el 13/10/2026: responden 200). Cualquier otro link del
+# Congreso que no esté en lo consultado se muestra como texto: Mistral
+# inventaba "spley.congreso.gob.pe" (no existe) y "congreso.gob.pe/spley/" (404).
+PORTALES_OFICIALES = (
+    "https://wb2server.congreso.gob.pe/spley-portal/",
+    "https://wb2server.congreso.gob.pe/smociones-portal/",
+    "https://comunicaciones.congreso.gob.pe/agenda/",
+    "https://diputados.congreso.gob.pe/sesiones-del-pleno/",
+    "https://senado.congreso.gob.pe/sesiones_del_pleno/",
+    "https://www.congreso.gob.pe/",
+    "https://diputados.congreso.gob.pe/",
+    "https://senado.congreso.gob.pe/",
+)
+
+_LINK_MD_CONGRESO_RE = re.compile(r"\[([^\]\n]+)\]\((https?://[^)\s]*congreso\.gob\.pe[^)\s]*)\)")
+
+
+def _norm_link(u: str) -> str:
+    return u.rstrip(".,;:").rstrip("/")
+
+
+def _links_permitidos(fuentes: str) -> set[str]:
+    return ({_norm_link(u) for u in LINK_CONGRESO_RE.findall(fuentes)}
+            | {_norm_link(u) for u in PORTALES_OFICIALES})
+
+
+_EXPEDIENTE_NUM_RE = re.compile(r"/expediente/\d{4}/0*(\d+)")
+_MENCION_PROYECTO_RE = re.compile(
+    r"(?:\bPL|Proyecto de Ley|Proposici[oó]n Legislativa|Moci[oó]n)\s*(?:N\.?\s*[°º]?\s*)?0*(\d{1,5})\b",
+    re.IGNORECASE)
+
+
+def _numeros_mencionados(linea: str) -> set[int]:
+    nums = {int(m.group(1)) for m in _MENCION_PROYECTO_RE.finditer(linea)}
+    nums |= {int(m.group(1)) for m in NUM_PROYECTO_RE.finditer(linea)}
+    return nums
+
+
+def _desenlazar(texto: str, permitidos: set[str]) -> str:
+    """
+    Quita los links del Congreso que no están en los datos ni son portales
+    oficiales, y los de expediente que apuntan a otro proyecto que el que
+    nombra la línea (visto: "PL 98 ... [Ver proyecto](.../expediente/2026/571)").
+    """
+    return "".join(_desenlazar_linea(linea, permitidos)
+                   for linea in texto.splitlines(keepends=True))
+
+
+def _desenlazar_linea(texto: str, permitidos: set[str]) -> str:
+    mencionados = _numeros_mencionados(_LINK_MD_CONGRESO_RE.sub(r"\1", texto))
+
+    def md(m):
+        if _norm_link(m.group(2)) not in permitidos:
+            return m.group(1)
+        exp = _EXPEDIENTE_NUM_RE.search(m.group(2))
+        if exp and mencionados and int(exp.group(1)) not in mencionados:
+            return m.group(1)
+        return m.group(0)
+
+    def suelto(m):
+        return m.group(0) if _norm_link(m.group(0)) in permitidos else ""
+
+    texto = _LINK_MD_CONGRESO_RE.sub(md, texto)
+    # Los que quedan son sueltos (los de un [texto](url) válido ya pasaron).
+    partes = re.split(r"(\[[^\]\n]+\]\([^)\s]+\))", texto)
+    return "".join(pt if i % 2 else LINK_CONGRESO_RE.sub(suelto, pt)
+                   for i, pt in enumerate(partes))
+
+
 def _clave_proyecto(m: re.Match) -> tuple:
     # "00434-2026-2031-CD" y "434-2026-2031-CD" son el mismo proyecto.
     return int(m.group(1)), m.group(2), m.group(3)
@@ -331,14 +401,14 @@ def _clave_proyecto(m: re.Match) -> tuple:
 def _citas_no_verificadas(respuesta: str, fuentes: str) -> tuple[list[str], list[str]]:
     """Números de proyecto y enlaces del Congreso que están en la respuesta pero no en las fuentes."""
     nums_ok = {_clave_proyecto(m) for m in NUM_PROYECTO_RE.finditer(fuentes)}
-    links_ok = {u.rstrip(".,;:") for u in LINK_CONGRESO_RE.findall(fuentes)}
+    links_ok = _links_permitidos(fuentes)
     nums, links = [], []
     for m in NUM_PROYECTO_RE.finditer(respuesta):
         if _clave_proyecto(m) not in nums_ok and m.group(0) not in nums:
             nums.append(m.group(0))
     for u in LINK_CONGRESO_RE.findall(respuesta):
         u = u.rstrip(".,;:")
-        if u not in links_ok and u not in links:
+        if _norm_link(u) not in links_ok and u not in links:
             links.append(u)
     return nums, links
 
@@ -846,14 +916,18 @@ class ChatOrchestrator:
         suyo), así que corregir por línea da el mismo resultado.
         """
         nombres = _extraer_nombres_normalizados(self.tool_msgs) if self.tool_msgs else set()
+        permitidos = _links_permitidos(
+            "\n".join(str(m.get("content") or "") for m in msgs + self.messages))
+
+        def limpio(texto):
+            texto = _desenlazar(texto, permitidos)
+            return _fix_nombres_reformateados(texto, nombres) if nombres else texto
+
         pendiente = ""
         completo = ""
         async for kind, payload in llm.stream(msgs, max_tokens=max_tokens):
             if kind == "text":
-                completo += payload
-                if not nombres:
-                    yield sse.text(payload)
-                    continue
+                # Siempre por línea: un link se limpia entero, nunca a medias.
                 pendiente += payload
                 corte = pendiente.rfind("\n")
                 if corte < 0 and len(pendiente) > 1500:
@@ -862,16 +936,22 @@ class ChatOrchestrator:
                     corte = pendiente.rfind(". ")
                 if corte >= 0:
                     listo, pendiente = pendiente[:corte + 1], pendiente[corte + 1:]
-                    yield sse.text(_fix_nombres_reformateados(listo, nombres))
+                    listo = limpio(listo)
+                    completo += listo
+                    yield sse.text(listo)
             elif kind == "status":
                 yield sse.status(payload)
             elif kind == "error":
                 if pendiente:
-                    yield sse.text(_fix_nombres_reformateados(pendiente, nombres))
+                    listo = limpio(pendiente)
+                    completo += listo
+                    yield sse.text(listo)
                 yield sse.error(payload)
                 return
         if pendiente:
-            yield sse.text(_fix_nombres_reformateados(pendiente, nombres))
+            listo = limpio(pendiente)
+            completo += listo
+            yield sse.text(listo)
         aviso = self._verificar_citas(completo, msgs)
         if aviso:
             yield sse.text(aviso)

@@ -319,7 +319,7 @@ async def _deltas(provider, messages, *, role, max_tokens, temperature, meta=Non
         model=model or model_for(provider, role),
         messages=messages,
         max_tokens=max_tokens,
-        temperature=temperature,
+        temperature=PROVIDERS.get(provider, {}).get("temperatura", temperature),
         stream=True,
         **_extra_params(provider),
     )

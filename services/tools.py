@@ -63,6 +63,10 @@ TOOLS = [
                         "type": "integer",
                         "description": "Filtrar proyectos presentados en los últimos N días calendario (ej: 15 para los últimos 15 días)"
                     },
+                    "camara": {
+                        "type": "string",
+                        "description": "Opcional. Solo los de una cámara: 'diputados', 'senado' o 'congreso'."
+                    },
                     # Sin esto el modelo no tenía forma de pedir más resultados:
                     # el prompt le ordenaba "vuelve a llamar con limit >=
                     # total_disponible" cuando la respuesta venía truncada, pero
@@ -326,13 +330,25 @@ async def _responder_directo():
     return {"nota": "Responde directamente con tu conocimiento, sin datos externos."}
 
 
+def _solo(args: dict, funcion) -> dict:
+    """
+    Los argumentos que `funcion` acepta. Un modelo que inventa un parámetro
+    (Mistral mandó camara= a buscar_proyectos antes de que existiera) hacía
+    reventar la herramienta con TypeError, y Diana decía "error técnico en
+    la fuente oficial" sin haber consultado nada.
+    """
+    import inspect
+    aceptados = inspect.signature(funcion).parameters
+    return {k: v for k, v in args.items() if k in aceptados}
+
+
 TOOL_MAP = {
-    "buscar_proyectos":        lambda args: fetch_proyectos(**args),
-    "buscar_sesiones":         lambda args: fetch_sesiones(**args),
+    "buscar_proyectos":        lambda args: fetch_proyectos(**_solo(args, fetch_proyectos)),
+    "buscar_sesiones":         lambda args: fetch_sesiones(**_solo(args, fetch_sesiones)),
     "buscar_agenda":           lambda args: fetch_agenda(),
     "buscar_destacados":       lambda args: fetch_destacados(),
-    "buscar_congresista":      lambda args: fetch_congresista(**args),
-    "rastrear_proyecto":       lambda args: fetch_estado_proyecto(**args),
+    "buscar_congresista":      lambda args: fetch_congresista(**_solo(args, fetch_congresista)),
+    "rastrear_proyecto":       lambda args: fetch_estado_proyecto(**_solo(args, fetch_estado_proyecto)),
     "fetch_expediente":        lambda args: fetch_expediente(
                                    numero=args.get("numero_proyecto") or args.get("numero", "")
                                ),

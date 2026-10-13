@@ -599,3 +599,30 @@ async def test_sin_datos_no_se_cachea():
         await ChatOrchestrator._run_tool("buscar_agenda", {})
         await ChatOrchestrator._run_tool("buscar_agenda", {})
     assert len(llamadas) == 2
+
+
+def test_desenlaza_links_del_congreso_inventados():
+    from services.orchestrator import _desenlazar, _links_permitidos
+
+    fuentes = "enlace: https://wb2server.congreso.gob.pe/spley-portal/#/diputados/expediente/2026/571"
+    permitidos = _links_permitidos(fuentes)
+    texto = ("Mira el [SPLEY del Senado](https://spley.congreso.gob.pe) o "
+             "[el expediente](https://wb2server.congreso.gob.pe/spley-portal/#/diputados/expediente/2026/571) "
+             "y la agenda https://diputados.congreso.gob.pe/agenda/ o "
+             "[la agenda oficial](https://comunicaciones.congreso.gob.pe/agenda/).")
+    limpio = _desenlazar(texto, permitidos)
+    assert "spley.congreso.gob.pe" not in limpio and "SPLEY del Senado" in limpio
+    assert "expediente/2026/571)" in limpio
+    assert "diputados.congreso.gob.pe/agenda" not in limpio
+    assert "(https://comunicaciones.congreso.gob.pe/agenda/)" in limpio
+
+
+def test_desenlaza_expediente_de_otro_proyecto():
+    from services.orchestrator import _desenlazar, _links_permitidos
+
+    url = "https://wb2server.congreso.gob.pe/spley-portal/#/diputados/expediente/2026/571"
+    permitidos = _links_permitidos(url)
+    mal = f"- **Proyecto de Ley 98**: delega facultades. [Ver proyecto]({url})\n"
+    bien = f"| [00571-2026-2031-CD]({url}) | 12/10/2026 | Modifica la Ley 26497 |\n"
+    assert url not in _desenlazar(mal, permitidos)
+    assert url in _desenlazar(bien, permitidos)

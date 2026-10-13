@@ -18,6 +18,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import re
 import threading
 
 from config import DATA_DIR, PROVIDERS, logger
@@ -89,10 +90,27 @@ def _ocr_vision_sin_lock(png_b64: str) -> str:
     return "\n".join(o.topCandidates_(1)[0].string() for o in (pedido.results() or []))
 
 
+# Confusiones del OCR con la "I" mayúscula y la "l" minúscula, que en un
+# texto legal cambian el sentido: "artículo Il del Título Preliminar" (por
+# II) terminaba resumido como "artículo I", y "EI artículo" (por "El").
+_CONFUSIONES_OCR = [
+    (re.compile(r"\b(?:Ill|IIl|lII|lll)\b"), "III"),
+    (re.compile(r"\b(?:Il|lI|ll)\b(?=\s+del\s+T[ií]tulo|\s+de\s+la|\.|,|\s*$)", re.MULTILINE), "II"),
+    (re.compile(r"(?<=art[ií]culo\s)(?:Il|lI|ll)\b", re.IGNORECASE), "II"),
+    (re.compile(r"\bEI\b"), "El"),
+]
+
+
+def corregir_confusiones(texto: str) -> str:
+    for patron, reemplazo in _CONFUSIONES_OCR:
+        texto = patron.sub(reemplazo, texto)
+    return texto
+
+
 async def _transcribir_vision(imagenes: list[tuple[int, str]]) -> str:
     partes = []
     for n, b64 in imagenes:
-        texto = await asyncio.to_thread(_ocr_vision, b64)
+        texto = corregir_confusiones(await asyncio.to_thread(_ocr_vision, b64))
         if texto.strip():
             partes.append(f"[Página {n}]\n{texto}")
     if not partes:

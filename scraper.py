@@ -546,7 +546,7 @@ async def _fetch_spley_por_materia(materia: str, limit: int = 20):
 
 
 async def fetch_proyectos(autor=None, comision=None, numero=None, materia=None,
-                          legislatura="2021-2026", limit=None, dias=None):
+                          legislatura="2021-2026", limit=None, dias=None, camara=None):
     from datetime import timedelta
 
     # `dias` es una ventana temporal cerrada ("los últimos 15 días"), no una
@@ -644,6 +644,12 @@ async def fetch_proyectos(autor=None, comision=None, numero=None, materia=None,
                 if filtro_local:
                     items = [p for p in items if filtro_local(p)]
 
+                # "Novedades de Diputados": en el periodo bicameral cada
+                # proyecto trae su cámara (_camara), y sin filtro se mezclaban.
+                cod_camara = _codigo_camara(camara)
+                if cod_camara:
+                    items = [p for p in items if p.get("_camara") == cod_camara]
+
                 # Filtrar por fecha si se pidió
                 if dias:
                     # Normalizado a medianoche: las fechas de SPLEY vienen a
@@ -681,6 +687,18 @@ async def fetch_proyectos(autor=None, comision=None, numero=None, materia=None,
             "error": "No se pudo conectar con el sistema SPLEY del Congreso. "
                      "Consulta https://wb2server.congreso.gob.pe/spley-portal/"
         }
+
+
+def _codigo_camara(camara) -> str | None:
+    """'diputados' → 'D', 'Senado' → 'S', 'congreso' → 'C'; None si no se reconoce."""
+    t = _sin_acentos(camara or "")
+    if "DIPUTAD" in t:
+        return "D"
+    if "SENAD" in t:
+        return "S"
+    if "CONGRES" in t:
+        return "C"
+    return None
 
 
 def _mensaje_sin_proyectos(autor=None, comision=None, numero=None,
@@ -2300,6 +2318,15 @@ async def fetch_interpelaciones(ministro: str = None):
             "mensaje": (f"El Congreso no tiene mociones de interpelación registradas"
                         f"{detalle} en el periodo actual."),
         }
+
+    # Cada moción trae todos sus firmantes (hasta 30 nombres con su bancada):
+    # con 4 mociones el resultado pasaba el tope del orquestador, se cortaba
+    # la última y el modelo decía que "no aparece en el sistema".
+    for m in mociones:
+        autores = [a.strip() for a in (m.get("autores") or "").split(";") if a.strip()]
+        if len(autores) > 3:
+            m["autores"] = "; ".join(autores[:3]) + f"; y {len(autores) - 3} más"
+            m["cantidad_firmantes"] = len(autores)
 
     return {
         "fuente": "Sistema de Mociones de Orden del Día — api.congreso.gob.pe",

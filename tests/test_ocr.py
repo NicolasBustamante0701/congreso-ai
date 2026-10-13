@@ -65,3 +65,11 @@ def test_vision_lee_texto_de_una_imagen():
     png = pagina.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False).tobytes("png")
     texto = ocr._ocr_vision(base64.b64encode(png).decode())
     assert "Objeto de la Ley" in texto
+
+
+def test_corrige_numerales_romanos_del_ocr():
+    texto = ("a) EI artículo Il del Título Preliminar del Código Penal\n"
+             "b) El artículo Ill del Título Preliminar\nIl Congreso")
+    limpio = ocr.corregir_confusiones(texto)
+    assert "El artículo II del Título Preliminar del Código Penal" in limpio
+    assert "artículo III del" in limpio
