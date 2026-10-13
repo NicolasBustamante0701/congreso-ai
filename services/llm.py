@@ -23,6 +23,7 @@ from openai import AsyncOpenAI, Timeout
 
 from config import (
     FIRST_TOKEN_TIMEOUT,
+    LLM_API_KEY,
     LLM_CONNECT_TIMEOUT,
     LLM_FALLBACKS,
     LLM_PROVIDER,
@@ -87,6 +88,8 @@ async def warmup() -> None:
     models.list() no consume cuota de generación. Falla en silencio: es una
     optimización, no un requisito.
     """
+    if not LLM_API_KEY:
+        return   # sin key no hay a qué conectarse: el chat ya avisa que falta
     try:
         with timed("LLM warmup", provider=LLM_PROVIDER):
             await get_client().models.list()
@@ -179,7 +182,7 @@ def friendly_error(e, provider: str = LLM_PROVIDER) -> str:
         var = _ENV_KEY.get(provider, "la API key")
         return (
             f"La API key de {_label(provider)} no es válida o falta. "
-            f"Abrí tu perfil (abajo a la izquierda) → Ajustes de IA y pegá una válida. "
+            f"Abrí Ajustes (abajo a la izquierda) → Inteligencia artificial y pegá una válida. "
             f"Si corrés desde el código, también podés ponerla en {var} del archivo .env."
         )
     if _es_cuota_diaria(e):

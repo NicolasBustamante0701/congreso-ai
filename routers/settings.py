@@ -83,6 +83,22 @@ async def diagnostico():
                     "detalle": type(e).__name__}
 
     resultados = await asyncio.gather(*(probar(n, u) for n, u in fuentes.items()))
+
+    # ffmpeg: en el .app viaja dentro del bundle (imageio-ffmpeg); sin él no
+    # hay transcripción. Se ejecuta de verdad (-version), no solo se busca.
+    from live_transcriber import ffmpeg_exe
+
+    def _ffmpeg():
+        import subprocess
+        exe = ffmpeg_exe()
+        try:
+            r = subprocess.run([exe, "-version"], capture_output=True, timeout=10)
+            linea = r.stdout.decode(errors="replace").splitlines()[0] if r.stdout else ""
+            return {"ok": r.returncode == 0, "detalle": linea[:80] or f"código {r.returncode}", "ruta": exe}
+        except Exception as e:
+            return {"ok": False, "detalle": type(e).__name__, "ruta": exe}
+
+    ffmpeg = await asyncio.to_thread(_ffmpeg)
     try:
         sesiones = transcripts.listar_sesiones()
         base = {"ok": True, "ruta": str(DB_FILE), "sesiones": len(sesiones)}
@@ -92,6 +108,7 @@ async def diagnostico():
         "comprobado": ahora_lima().strftime("%d/%m/%Y %H:%M:%S"),
         "ia": {"proveedor": LLM_PROVIDER, "configurada": bool(LLM_API_KEY)},
         "transcripcion": bool(GROQ_API_KEY),
+        "ffmpeg": ffmpeg,
         "fuentes": resultados,
         "base_de_datos": base,
         "log": str(LOG_FILE),

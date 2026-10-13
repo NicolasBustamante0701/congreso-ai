@@ -146,7 +146,7 @@ function startServer() {
   // transcribir no quedan huérfanos consumiendo red y CPU.
   const proc = spawn(exe, args, {
     env: { ...process.env, ...aiEnv(), PORT: String(PORT), DIANA_LOG_DIR: app.getPath('logs'),
-           DIANA_DATA_DIR: app.getPath('userData') },
+           DIANA_DATA_DIR: app.getPath('userData'), DIANA_PARENT_PID: String(process.pid) },
     cwd,
     detached: process.platform !== 'win32',
   });

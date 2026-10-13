@@ -895,6 +895,7 @@
         fila('Servidor local', true, 'respondiendo'),
         fila('Proveedor de IA', d.ia.configurada, d.ia.configurada ? `${NOMBRE_PROV[d.ia.proveedor] || d.ia.proveedor} con key configurada` : 'falta la API key'),
         fila('Transcripción (Groq)', d.transcripcion, d.transcripcion ? 'key configurada' : 'falta la key de Groq'),
+        fila('ffmpeg (audio de sesiones)', d.ffmpeg.ok, d.ffmpeg.detalle),
         ...d.fuentes.map((f) => fila(f.nombre, f.ok, `${f.detalle} · ${f.ms} ms`)),
         fila('Base de datos local', d.base_de_datos.ok, d.base_de_datos.ok ? `${d.base_de_datos.sesiones} sesiones · ${d.base_de_datos.ruta}` : d.base_de_datos.detalle),
         `<dt>Registro técnico</dt><dd><code>${esc(d.log)}</code></dd>`,

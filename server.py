@@ -8,6 +8,10 @@ La lógica vive en:
   config.py  — rutas, credenciales y modelos
 """
 import asyncio
+import os
+import signal
+import threading
+import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -39,6 +43,35 @@ from services import llm, seguimiento
 from services.observability import RequestContextMiddleware
 
 
+def _vigilar_padre() -> None:
+    """
+    Si Electron muere sin cerrar el server (crash, kill -9, la app forzada a
+    salir), el server quedaba huérfano para siempre: escuchando en el puerto
+    y con sus ffmpeg corriendo. main.js pasa su PID en DIANA_PARENT_PID; un
+    hilo del sistema (no una tarea de asyncio, que depende del event loop)
+    comprueba cada 3 s que el padre siga siendo ese y, si no, termina el
+    grupo de procesos entero — el server es líder de grupo (spawn detached),
+    así que caen también los ffmpeg.
+    """
+    padre = os.getenv("DIANA_PARENT_PID")
+    if not padre or not padre.isdigit() or os.name != "posix":
+        return
+    padre = int(padre)
+
+    def bucle():
+        while True:
+            time.sleep(3)
+            if os.getppid() != padre:
+                logger.warning("Electron (pid %s) ya no está: el server se apaga solo", padre)
+                try:
+                    os.killpg(os.getpgrp(), signal.SIGTERM)
+                finally:
+                    time.sleep(5)
+                    os._exit(0)
+
+    threading.Thread(target=bucle, name="vigilar-padre", daemon=True).start()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Diana arrancando: proveedor=%s fallbacks=%s log=%s",
@@ -46,6 +79,7 @@ async def lifespan(app: FastAPI):
     # En segundo plano: abrir la conexión tarda hasta 3.5s y el servidor tiene
     # que estar escuchando ya — Electron espera contra el puerto (ver main.js).
     warmup = asyncio.create_task(llm.warmup())
+    _vigilar_padre()
     # Revisión periódica de los proyectos seguidos, solo mientras la app
     # está abierta (ver services/seguimiento.py).
     revision = asyncio.create_task(seguimiento.bucle_automatico())
