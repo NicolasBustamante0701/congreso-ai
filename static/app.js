@@ -285,19 +285,146 @@
   const SVG_USER = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="10" cy="7" r="3.2"/><path d="M3.8 16.5c0-3.2 2.8-5.3 6.2-5.3s6.2 2.1 6.2 5.3"/></svg>';
   const SVG_BOT = '<svg viewBox="0 0 32 32" fill="none"><path d="M3 12h26M16 4L3 12h26L16 4z" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round"/><path d="M7 14v10M13 14v10M19 14v10M25 14v10M4 27h24" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></svg>';
 
+  // ── Bienvenida del chat: saludo + panel de tarjetas + consultas frecuentes ──
+  // Como el front anterior: al abrir la app (o una consulta nueva) se ve un
+  // resumen del día en tarjetas. Cada número sale de una fuente real; si una
+  // fuente falla, su tarjeta lo dice en vez de mostrar un dato de relleno.
+  const ICONOS = {
+    sesion: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="14" height="12.5" rx="1.5"/><path d="M3 8.5h14M7 2.5v4M13 2.5v4"/></svg>',
+    semana: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 15l4-5 3 3 4-6 3 4"/><path d="M3 17.5h14"/></svg>',
+    proyectos: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h6.5L16 7.5V16a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M11 3v5h5M7 11h6M7 14h4"/></svg>',
+    citaciones: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2.5l2.2 4.6 5 .7-3.6 3.5.9 5-4.5-2.4-4.5 2.4.9-5L2.8 7.8l5-.7z"/></svg>',
+    comisiones: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="7" cy="7" r="2.6"/><circle cx="13.5" cy="7" r="2.6"/><path d="M2.5 16.5c0-2.5 2-4.3 4.5-4.3M13.5 12.2c2.5 0 4.5 1.8 4.5 4.3M10.2 12.6v4"/></svg>',
+    seguimiento: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2.8a5 5 0 0 0-5 5v3.1L3.6 13.6h12.8L15 10.9V7.8a5 5 0 0 0-5-5z"/><path d="M8 16.2a2 2 0 0 0 4 0"/></svg>',
+  };
+  const TARJETAS = [
+    { k: 'sesion', t: 'Próxima sesión', ver: 'Ver agenda', goto: 'agenda' },
+    { k: 'semana', t: 'Actividades en 7 días', ver: 'Ver la semana', goto: 'agenda' },
+    { k: 'proyectos', t: 'Proyectos ingresados', ver: 'Ver proyectos',
+      cmd: 'Revisa los proyectos de ley de los últimos 7 días calendario, y entrégame un cuadro resumen dividido por temas' },
+    { k: 'citaciones', t: 'Citaciones', ver: 'Ver citaciones',
+      cmd: 'Dame el resumen y el acceso a descarga de documentos en DESTACADO y CITACIONES de DIPUTADOS, SENADO y CONGRESO' },
+    { k: 'comisiones', t: 'Comisiones', ver: 'Ver comisiones',
+      cmd: 'Dame los accesos al Cuadro de Comisiones y miembros de la Comisión Permanente del SENADO y DIPUTADOS' },
+    { k: 'seguimiento', t: 'Seguimiento', ver: 'Ver cambios', goto: 'seguimiento' },
+  ];
+
+  let panelCache = null;   // { t: ms, datos } — 5 min, para no repetir 4 consultas en cada chat nuevo
+  async function datosPanel() {
+    if (panelCache && Date.now() - panelCache.t < 5 * 60 * 1000) return panelCache.datos;
+    const [m, ag, seg, al] = await Promise.allSettled([
+      getJSON('/dashboard-metrics'), getJSON('/agenda?dias=7'), getJSON('/seguimiento'), getJSON('/alertas?sin_leer=true')]);
+    const datos = {
+      m: m.status === 'fulfilled' ? m.value : null,
+      ag: ag.status === 'fulfilled' && !ag.value.error ? ag.value : null,
+      seg: seg.status === 'fulfilled' ? seg.value : null,
+      al: al.status === 'fulfilled' ? al.value : null,
+    };
+    if (datos.m || datos.ag) panelCache = { t: Date.now(), datos };
+    return datos;
+  }
+
+  // Número que sube desde 0 (solo decorativo: el valor final es el real).
+  function contar(el, fin) {
+    if (!Number.isFinite(fin) || fin <= 0 || matchMedia('(prefers-reduced-motion: reduce)').matches) { el.textContent = String(fin); return; }
+    const t0 = performance.now(), dur = 700;
+    const paso = (t) => {
+      const p = Math.min(1, (t - t0) / dur);
+      el.textContent = String(Math.round(fin * (1 - Math.pow(1 - p, 3))));
+      if (p < 1) requestAnimationFrame(paso);
+    };
+    requestAnimationFrame(paso);
+  }
+
+  async function llenarPanel(cont) {
+    const d = await datosPanel();
+    if (!cont.isConnected) return;
+    const fill = (k, { valor, num, sub, vivo, sinDatos }) => {
+      const card = cont.querySelector(`[data-tarjeta="${k}"]`);
+      if (!card) return;
+      card.classList.remove('is-cargando');
+      if (sinDatos) card.classList.add('is-sin-datos');
+      const v = card.querySelector('.tarjeta-valor');
+      v.innerHTML = valor != null ? esc(valor) : '';
+      if (num != null) { const span = document.createElement('span'); v.appendChild(span); contar(span, num); }
+      card.querySelector('.tarjeta-sub').textContent = sub || '';
+      if (vivo) card.querySelector('.tarjeta-icono').insertAdjacentHTML('beforeend', '<span class="tarjeta-pulso" aria-hidden="true"></span>');
+    };
+    const m = d.m;
+    if (m?.proxima_sesion) {
+      const p = m.proxima_sesion;
+      fill('sesion', { valor: `${p.etiqueta_fecha} · ${p.hora}`, sub: [p.camara, p.tema].filter(Boolean).join(' — '), vivo: p.etiqueta_fecha === 'Hoy' });
+    } else fill('sesion', m ? { valor: 'Sin sesiones', sub: 'en los próximos 14 días' } : { valor: '—', sub: 'La agenda oficial no respondió', sinDatos: true });
+    if (d.ag) {
+      const n = d.ag.sesiones.filter((s) => new Date(s.iso) >= new Date(Date.now() - 3600e3)).length;
+      const hoy = d.ag.sesiones.filter((s) => s.dia === 'Hoy').length;
+      fill('semana', { num: n, sub: hoy ? `${hoy} hoy · Senado, Diputados y comisiones` : 'Senado, Diputados y comisiones' });
+    } else fill('semana', { valor: '—', sub: 'La agenda oficial no respondió', sinDatos: true });
+    if (m?.proyectos_ingresados) fill('proyectos', { num: m.proyectos_ingresados.total, sub: `en los últimos ${m.proyectos_ingresados.dias} días · SPLEY` });
+    else fill('proyectos', { valor: '—', sub: 'SPLEY no respondió', sinDatos: true });
+    if (m?.citaciones) fill('citaciones', { num: m.citaciones.total, sub: m.citaciones.total ? 'publicadas esta semana' : 'ninguna publicada esta semana' });
+    else fill('citaciones', { valor: '—', sub: 'Los portales no respondieron', sinDatos: true });
+    if (m?.comisiones_registradas) {
+      const c = m.comisiones_registradas;
+      fill('comisiones', { num: c.total, sub: `${c.senado} Senado · ${c.diputados} Diputados` });
+    } else fill('comisiones', { valor: '—', sub: 'sin datos', sinDatos: true });
+    if (d.seg) {
+      const n = d.seg.proyectos.length, cambios = d.al?.sin_leer || 0;
+      fill('seguimiento', n
+        ? { num: cambios, sub: `cambio${cambios === 1 ? '' : 's'} sin leer · ${n} proyecto${n === 1 ? '' : 's'} seguido${n === 1 ? '' : 's'}` }
+        : { valor: 'Nada aún', sub: 'Sigue un proyecto para recibir avisos' });
+    }
+  }
+
+  // Transmisión en vivo del Congreso: aviso arriba del panel (yt-dlp tarda,
+  // así que llega después y solo si de verdad hay algo en vivo).
+  let vivoCache = null;
+  async function avisoEnVivo(cont) {
+    try {
+      if (!vivoCache || Date.now() - vivoCache.t > 5 * 60 * 1000) {
+        const r = await getJSON('/sesiones/videos');
+        vivoCache = { t: Date.now(), v: (r.videos || []).find((v) => v.en_vivo) || null };
+      }
+      const v = vivoCache.v;
+      if (!v || !cont.isConnected) return;
+      cont.innerHTML = `<button class="en-vivo" data-goto="sesiones"><span class="en-vivo-punto" aria-hidden="true"></span>
+        <span><strong>En vivo ahora:</strong> ${esc(v.titulo.replace(/^🔴\s*/, ''))}</span><span class="en-vivo-cta">Transcribir →</span></button>`;
+    } catch { /* sin aviso */ }
+  }
+
   function renderVacio() {
     const grupos = [...new Set(FRECUENTES.map((f) => f.grupo))];
+    const fecha = new Date().toLocaleDateString('es-PE', { weekday: 'long', day: 'numeric', month: 'long' });
     chatArea.innerHTML = `
       <div class="chat-vacio">
-        <h2>¿Qué quieres investigar?</h2>
-        <p>Diana consulta en el momento las fuentes oficiales del Congreso, el Senado y la Cámara de Diputados, y te dice de dónde sale cada dato. También puedes adjuntar un PDF o abrir un expediente.</p>
-        ${grupos.map((g) => `
-          <div class="grupo"><div class="grupo-t">${esc(g)}</div>
+        <div class="bienvenida anim-in" style="--i:0">
+          <h2>${esc(saludo())} <span class="saludo-mano" aria-hidden="true">👋</span></h2>
+          <p>${esc(fecha.charAt(0).toUpperCase() + fecha.slice(1))} · Esto es lo que está pasando en el Congreso. Diana consulta las fuentes oficiales en el momento y te dice de dónde sale cada dato.</p>
+        </div>
+        <div class="en-vivo-slot" id="en-vivo-slot"></div>
+        <div class="tarjetas" id="panel-tarjetas">
+          ${TARJETAS.map((c, i) => `
+            <button class="tarjeta is-cargando anim-in" style="--i:${i + 1}" data-tarjeta="${c.k}" ${c.cmd ? `data-cmd="${esc(c.cmd)}"` : `data-goto="${c.goto}"`}>
+              <span class="tarjeta-top"><span class="tarjeta-icono">${ICONOS[c.k]}</span><span class="tarjeta-t">${esc(c.t)}</span></span>
+              <span class="tarjeta-valor"><span class="d-skeleton" style="width:60%;height:22px"></span></span>
+              <span class="tarjeta-sub"><span class="d-skeleton" style="width:85%"></span></span>
+              <span class="tarjeta-ver">${esc(c.ver)} <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 6h9M7 2.5L10.5 6 7 9.5"/></svg></span>
+            </button>`).join('')}
+        </div>
+        ${grupos.map((g, gi) => `
+          <div class="grupo anim-in" style="--i:${7 + gi}"><div class="grupo-t">${esc(g)}</div>
             <div class="sugerencias">${FRECUENTES.map((f, i) => f.grupo !== g ? '' : `
               <button class="sugerencia" data-frecuente="${i}"><strong>${esc(f.t)}</strong><span>${esc(f.d)}</span></button>`).join('')}
             </div></div>`).join('')}
       </div>`;
+    chatArea.scrollTop = 0;
+    llenarPanel($('panel-tarjetas'));
+    avisoEnVivo($('en-vivo-slot'));
   }
+  document.addEventListener('click', (e) => {
+    const c = e.target.closest('.tarjeta[data-cmd]');
+    if (c && !streaming) { newChat(); send(c.dataset.cmd); }
+  });
 
   function renderMessages() {
     const conv = getActive();
@@ -329,11 +456,12 @@
     chatArea.appendChild(d);
     scrollBottom();
   }
+  const ESCRIBIENDO = (txt) => `<span class="escribiendo"><span class="escribiendo-puntos"><i></i><i></i><i></i></span>${esc(txt)}</span>`;
   function appendBotPendiente() {
     const d = document.createElement('div');
-    d.className = 'msg bot';
+    d.className = 'msg bot is-pensando';
     d.innerHTML = `<div class="msg-av">${SVG_BOT}</div><div class="msg-body"><div class="msg-quien">Diana</div>
-      <div class="md msg-md"><span class="msg-estado"><span class="d-spinner"></span>Pensando…</span></div></div>`;
+      <div class="md msg-md">${ESCRIBIENDO('Pensando…')}</div></div>`;
     chatArea.appendChild(d);
     scrollBottom();
     return d;
@@ -344,9 +472,22 @@
     terminarMensaje(d, texto);
     return d;
   }
-  function pintar(msgEl, texto) { msgEl.querySelector('.msg-md').innerHTML = md(texto); }
+  function pintar(msgEl, texto) {
+    msgEl.classList.remove('is-pensando');
+    msgEl.querySelector('.msg-md').innerHTML = md(texto);
+  }
   function pintarEstado(msgEl, estado) {
-    msgEl.querySelector('.msg-md').innerHTML = `<span class="msg-estado"><span class="d-spinner"></span>${esc(estado)}</span>`;
+    msgEl.querySelector('.msg-md').innerHTML = ESCRIBIENDO(estado);
+  }
+
+  // Avisos breves abajo al centro ("Copiado", "Word exportado").
+  function toast(texto) {
+    let zona = document.querySelector('.toast-zona');
+    if (!zona) { zona = document.createElement('div'); zona.className = 'toast-zona'; zona.setAttribute('aria-live', 'polite'); document.body.appendChild(zona); }
+    const t = document.createElement('div');
+    t.className = 'toast'; t.textContent = texto;
+    zona.appendChild(t);
+    setTimeout(() => t.remove(), 2600);
   }
   const scrollBottom = () => { chatArea.scrollTop = chatArea.scrollHeight; };
 
@@ -468,6 +609,7 @@
   }
 
   function marcarHecho(btn, txt = 'Copiado') {
+    toast(txt === 'Listo' ? 'Exportado' : `✓ ${txt}`);
     const orig = btn.textContent;
     btn.textContent = `✓ ${txt}`;
     setTimeout(() => { btn.textContent = orig; }, 1800);
@@ -1179,9 +1321,11 @@
     const estado = await refrescarEstado();
     // Sin key, lo primero es configurarla: Diana no puede responder.
     if (estado && !estado.ready) { irA('ajustes'); return; }
-    let ultima = 'inicio';
-    try { ultima = localStorage.getItem('diana_vista') || 'inicio'; } catch { /* */ }
-    irA(ultima === 'ajustes' ? 'inicio' : ultima, { sinFoco: true });
+    // Se abre siempre en una consulta nueva, con el panel del día arriba
+    // (como el front anterior). El historial queda a un clic.
+    activeId = null;
+    renderMessages();
+    irA('diana', { sinFoco: true });
   }
   init();
 })();
