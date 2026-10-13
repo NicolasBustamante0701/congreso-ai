@@ -166,3 +166,12 @@ async def test_listar_y_404(api):
     _cargar(["a"])
     assert (await api.get("/transcripts")).json()["sesiones"][0]["video_id"] == VID
     assert (await api.get("/transcripts/noexiste")).status_code == 404
+
+
+def test_cobertura_aclara_si_los_tiempos_son_del_video():
+    from routers.transcripts import _texto_cobertura
+    _cargar(["a"], en_vivo=False)
+    assert "VIDEO GRABADO" in _texto_cobertura(tr.obtener(VID))
+    tr.iniciar_sesion("vivo1", "🔴 EN VIVO", en_vivo=True)
+    tr.guardar_ventana("vivo1", 0, 10, "x", "ok")
+    assert "de captura" in _texto_cobertura(tr.obtener("vivo1"))

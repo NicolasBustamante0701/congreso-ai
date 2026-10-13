@@ -49,8 +49,14 @@ def _texto_cobertura(datos: dict) -> str:
         partes.append("Partes NO procesadas: " + ", ".join(f"{a}–{b}" for a, b in c["huecos"]) + ".")
     if c["errores"]:
         partes.append(f"Ventanas de 10 s con error de transcripción en: {', '.join(c['errores'][:20])}.")
+    # Siempre explícito: el título de YouTube conserva "🔴 EN VIVO" aunque la
+    # transmisión ya haya terminado, y sin esta línea el modelo deducía del
+    # título que los tiempos eran "de captura" en un video grabado.
     if s["en_vivo"]:
-        partes.append("Era un stream en vivo: los tiempos son de captura, no del video.")
+        partes.append("Se transcribió mientras estaba EN VIVO: los tiempos son de captura, no del video.")
+    else:
+        partes.append("Se transcribió el VIDEO GRABADO: los tiempos corresponden al minuto exacto del video, "
+                      "aunque el título diga 'EN VIVO'.")
     if s["estado"] == "en_curso":
         partes.append("La transcripción todavía está en curso: puede faltar lo más reciente.")
     return " ".join(partes)
