@@ -88,9 +88,11 @@ PROMPTS_DIR = BASE_DIR / "prompts"
 # en el .app empaquetado el cwd lo fija Electron: si algún día cambia, las keys
 # desaparecen sin ruido y la app abre muerta. Por eso la ruta es explícita.
 #
-# Empaquetado el .env NO va dentro de _MEIPASS: viaja al lado del ejecutable,
-# en Resources/server/.env, porque `extraResources` copia dist/server tal cual
-# y el workflow escribe ahí las keys desde los secrets (ver build-mac.yml).
+# El .env es solo para desarrollo. El DMG sale SIN credenciales (build-mac.yml
+# falla si encuentra un .env en dist/server): cada usuario pega su key en
+# Ajustes y Electron la pasa por variable de entorno (main.js, aiEnv). Si el
+# archivo no existe, load_dotenv no hace nada y el server arranca igual; el
+# chat avisa que falta la key.
 ENV_FILE = (Path(sys.executable).resolve().parent if FROZEN else BASE_DIR) / ".env"
 load_dotenv(ENV_FILE)
 
@@ -110,8 +112,7 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 # Para pasar a producción con OpenAI real: LLM_PROVIDER=openai + OPENAI_API_KEY
 # en .env. No hace falta tocar nada más.
 #
-# El default es "gemini" porque es el proveedor que se usa de verdad, acá y en
-# el DMG (ver build-mac.yml). Antes era "groq": si por lo que sea el .env no
+# El default es "gemini" porque es el proveedor que se usa de verdad. Antes era "groq": si por lo que sea el .env no
 # carga, la app terminaba pidiéndole a Groq con la key vacía y el error que
 # salía era "falta la GROQ_API_KEY" — un desvío hacia un proveedor que no es
 # el que está configurado.
@@ -183,6 +184,12 @@ FIRST_TOKEN_TIMEOUT = float(os.getenv("FIRST_TOKEN_TIMEOUT", 15))
 ROUTER_TIMEOUT      = float(os.getenv("ROUTER_TIMEOUT", 15))
 WHISPER_TIMEOUT     = float(os.getenv("WHISPER_TIMEOUT", 120))
 
+if LLM_PROVIDER not in _PROVIDERS:
+    # Un typo en el .env tumbaba el import entero (KeyError) y la app no
+    # abría. Mejor arrancar con el default y dejarlo en el log.
+    logging.getLogger("congreso-ai").warning(
+        "LLM_PROVIDER '%s' no existe; uso gemini", LLM_PROVIDER)
+    LLM_PROVIDER = "gemini"
 _provider_cfg = _PROVIDERS[LLM_PROVIDER]
 LLM_BASE_URL  = _provider_cfg["base_url"]
 LLM_API_KEY   = _provider_cfg["api_key"]

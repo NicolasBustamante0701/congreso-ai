@@ -32,7 +32,7 @@ Para trabajar solo contra el servidor, sin la ventana de Electron:
 
 ### Configuración
 
-Las credenciales van en un `.env` en la raíz (no se commitea):
+En desarrollo, las credenciales van en un `.env` en la raíz (no se commitea; la app empaquetada usa Ajustes):
 
 ```
 GROQ_API_KEY=...        # transcripción Whisper — siempre Groq, ver config.py
@@ -104,35 +104,28 @@ Lo hace el workflow `build-mac.yml` al pushear un tag `v*`. Corre en un runner
 que no arranca en una Mac Intel (Rosetta 2 traduce x86→arm, no al revés). El
 DMG x64 corre nativo en Intel y bajo Rosetta 2 en Apple Silicon.
 
-### Las credenciales van dentro del bundle
+### Credenciales: el DMG sale sin keys
 
-`config.py` lee las keys de un `.env`, y `.env` está en `.gitignore` — así que
-el DMG salía sin credenciales: la app abría bien pero `LLM_API_KEY` quedaba en
-`""` y el chat cortaba con *"Falta la API key para el proveedor activo"*.
+Cada usuario pega su propia API key en **Ajustes de IA**, que se abre solo la
+primera vez. La key se guarda cifrada con el llavero de macOS (`safeStorage`,
+en `userData/ai-settings.json`), y Electron se la pasa al servidor por
+variable de entorno (`main.js`, `aiEnv`). Si el llavero no está disponible, la
+key queda solo en memoria hasta cerrar la app: nunca se escribe en texto
+plano.
 
-El paso **Inyectar credenciales en el bundle** del workflow escribe ese `.env`
-desde los secrets del repo, en `dist/server/`, que `extraResources` copia a
-`Resources/server/` — exactamente donde `config.ENV_FILE` lo busca cuando corre
-congelado. El workflow aborta si falta la key del proveedor activo.
+Hasta la versión anterior, el workflow escribía las keys del repo en
+`dist/server/.env` y viajaban en texto plano dentro del `.app`. **Las keys que
+estuvieron en esos secrets hay que rotarlas**: cualquiera con un DMG viejo
+puede extraerlas. Ahora el paso *Verificar que no viajen credenciales* hace
+fallar el build si aparece un `.env` en `dist/server`.
 
-Secrets a configurar en **Settings → Secrets and variables → Actions**:
-
-| Nombre | Tipo | Para qué |
-|---|---|---|
-| `GEMINI_API_KEY` / `GROQ_API_KEY` / `CEREBRAS_API_KEY` / `OPENAI_API_KEY` | secret | la del proveedor activo es obligatoria |
-| `GROQ_API_KEY` | secret | además, siempre, para la transcripción |
-| `LLM_PROVIDER` | variable | opcional, default `gemini` |
-
-> Las keys viajan en texto plano dentro del `.app`: cualquiera con el DMG puede
-> sacarlas y gastar la cuota. Sirve para repartir entre gente de confianza, no
-> para publicar. La alternativa es una pantalla de ajustes donde cada usuario
-> pegue la suya.
+Secrets que siguen haciendo falta en Actions: ninguno de proveedores de IA.
+`GITHUB_TOKEN` alcanza para publicar el release.
 
 ### A mano
 
 ```bash
 .venv/bin/pip install pyinstaller
 .venv/bin/pyinstaller server.spec --noconfirm
-cp .env dist/server/.env      # sin esto el .app abre sin credenciales
 npm run build
 ```

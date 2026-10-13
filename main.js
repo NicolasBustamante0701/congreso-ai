@@ -69,25 +69,34 @@ function logMain(...parts) {
 }
 
 // ── API key propia del usuario ──────────────────────────────
-// Quien recibe la app sin keys (o prefiere usar su cuenta) pega la suya en
-// Ajustes de IA. Se guarda en userData, cifrada con el llavero del sistema
-// (safeStorage), y se le pasa al server como variable de entorno: gana sobre
-// el .env empaquetado porque load_dotenv no pisa variables ya definidas.
+// La app se distribuye sin keys: cada usuario pega la suya en Ajustes de IA.
+// Se guarda en userData, cifrada con el llavero del sistema (safeStorage), y
+// se le pasa al server como variable de entorno. En desarrollo gana sobre el
+// .env porque load_dotenv no pisa variables ya definidas.
 const AI_SETTINGS_FILE = path.join(app.getPath('userData'), 'ai-settings.json');
 const PROVIDER_ENV = {
   gemini: 'GEMINI_API_KEY', groq: 'GROQ_API_KEY',
   openai: 'OPENAI_API_KEY', cerebras: 'CEREBRAS_API_KEY',
 };
 
-function encryptKey(value) {
+// Sin llavero disponible la key NO se escribe a disco en texto plano: queda
+// solo en memoria hasta que se cierre la app, y Ajustes la vuelve a pedir.
+const memKeys = {};
+
+function encryptKey(value, field) {
   if (safeStorage.isEncryptionAvailable()) {
     return { enc: safeStorage.encryptString(value).toString('base64') };
   }
-  return { plain: value };
+  logMain(`safeStorage no disponible: la key (${field}) queda solo en memoria`);
+  memKeys[field] = value;
+  return { mem: true };
 }
 
-function decryptKey(stored) {
+function decryptKey(stored, field) {
   if (!stored) return '';
+  if (stored.mem) return memKeys[field] || '';
+  // `plain` es de versiones anteriores que sí la guardaban sin cifrar: se
+  // sigue leyendo para no dejar al usuario sin key tras actualizar.
   try {
     return stored.enc ? safeStorage.decryptString(Buffer.from(stored.enc, 'base64')) : (stored.plain || '');
   } catch (e) {
@@ -104,13 +113,13 @@ function readAiSettings() {
 function aiEnv() {
   const s = readAiSettings();
   const env = {};
-  const key = decryptKey(s.apiKey);
+  const key = decryptKey(s.apiKey, 'apiKey');
   if (PROVIDER_ENV[s.provider] && key) {
     env.LLM_PROVIDER = s.provider;
     env[PROVIDER_ENV[s.provider]] = key;
   }
   // Con Groq como proveedor de chat, esa misma key sirve para transcribir.
-  const groq = decryptKey(s.groqKey);
+  const groq = decryptKey(s.groqKey, 'groqKey');
   if (groq && !env.GROQ_API_KEY) env.GROQ_API_KEY = groq;
   return env;
 }
@@ -460,12 +469,12 @@ ipcMain.handle('export-word', async (event, content) => {
 // ── IPC: ajustes de IA ───────────────────────────────────────
 ipcMain.handle('ai-settings-get', () => {
   const s = readAiSettings();
-  const key = decryptKey(s.apiKey);
+  const key = decryptKey(s.apiKey, 'apiKey');
   return {
     provider:   PROVIDER_ENV[s.provider] ? s.provider : null,
     hasKey:     Boolean(key),
     keyHint:    key ? key.slice(-4) : '',
-    hasGroqKey: Boolean(decryptKey(s.groqKey)),
+    hasGroqKey: Boolean(decryptKey(s.groqKey, 'groqKey')),
   };
 });
 
@@ -473,8 +482,8 @@ ipcMain.handle('ai-settings-save', async (event, { provider, apiKey, groqKey } =
   if (!PROVIDER_ENV[provider]) return { ok: false, error: 'Proveedor desconocido.' };
   const s = readAiSettings();
   s.provider = provider;
-  if (typeof apiKey === 'string' && apiKey.trim()) s.apiKey = encryptKey(apiKey.trim());
-  if (typeof groqKey === 'string' && groqKey.trim()) s.groqKey = encryptKey(groqKey.trim());
+  if (typeof apiKey === 'string' && apiKey.trim()) s.apiKey = encryptKey(apiKey.trim(), 'apiKey');
+  if (typeof groqKey === 'string' && groqKey.trim()) s.groqKey = encryptKey(groqKey.trim(), 'groqKey');
   try {
     fs.writeFileSync(AI_SETTINGS_FILE, JSON.stringify(s), { encoding: 'utf8', mode: 0o600 });
   } catch (e) {
@@ -487,7 +496,8 @@ ipcMain.handle('ai-settings-save', async (event, { provider, apiKey, groqKey } =
 
 ipcMain.handle('ai-settings-clear', async () => {
   try { fs.unlinkSync(AI_SETTINGS_FILE); } catch { /* ya no estaba */ }
-  logMain('ajustes de IA borrados: vuelve a la key de la app');
+  for (const k of Object.keys(memKeys)) delete memKeys[k];
+  logMain('ajustes de IA borrados');
   const ok = await restartServer();
   return { ok };
 });
