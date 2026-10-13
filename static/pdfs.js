@@ -155,7 +155,7 @@ function selectPdf(idx) {
 
   loadBtn.disabled = false;
   loadBtn.classList.remove('loading');
-  const loadLabel = isProyecto ? 'Consultar en chat' : 'Cargar al chat';
+  const loadLabel = isProyecto ? 'Preguntar a Diana' : 'Analizar con Diana';
   loadBtn.innerHTML = `<svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="2" y="2" width="14" height="14" rx="2"/><path d="M5 6h8M5 9h8M5 12h5"/></svg> ${loadLabel}`;
 
   loadBtn.onclick = () => {

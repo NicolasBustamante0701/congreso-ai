@@ -3,15 +3,17 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>PDFs del Congreso</title>
+  <title>Documentos — Diana</title>
   <script>
     // Mismo localStorage que el chat principal (mismo origen) — aplica el
     // tema antes de pintar para no parpadear en claro. pdfs.js escucha
     // cambios en vivo vía postMessage desde la ventana padre.
-    if (localStorage.getItem('congreso_dark') === '1') {
-      document.documentElement.dataset.theme = 'dark';
-    }
+    try {
+      document.documentElement.dataset.theme =
+        localStorage.getItem('congreso_dark') === '1' ? 'dark' : 'light';
+    } catch (e) { /* sin localStorage: sigue al sistema */ }
   </script>
+  <link rel="stylesheet" href="/static/tokens.css?v=1">
   <link rel="stylesheet" href="/static/pdfs.css">
 </head>
 <body>
@@ -26,7 +28,7 @@
           <path d="M4 4a2 2 0 0 1 2-2h5l5 5v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4z"/>
           <path d="M11 2v5h5"/>
         </svg>
-        PDFs del Congreso
+        Documentos del Congreso
       </div>
       <button id="refresh-btn" class="p-refresh-btn" title="Actualizar">
         <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
@@ -49,7 +51,7 @@
         <path d="M16 8a4 4 0 0 1 4-4h18l14 14v34a4 4 0 0 1-4 4H20a4 4 0 0 1-4-4V8z"/>
         <path d="M38 4v14h14M24 30h16M24 38h12"/>
       </svg>
-      <p>Selecciona un documento de la lista<br>para cargarlo al chat</p>
+      <p>Elegí un documento de la lista<br>para verlo o analizarlo con Diana</p>
     </div>
 
     <div class="p-panel" id="p-panel" style="display:none">
@@ -86,10 +88,10 @@
             <rect x="2" y="2" width="14" height="14" rx="2"/>
             <path d="M5 6h8M5 9h8M5 12h5"/>
           </svg>
-          Cargar al chat
+          Analizar con Diana
         </button>
       </div>
-      <div class="p-hint">El documento se analizará en el chat principal.</div>
+      <div class="p-hint">Diana lee el PDF (solo de congreso.gob.pe) y responde citando la página de cada dato.</div>
     </div>
   </main>
 

@@ -1,41 +1,12 @@
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+*, *::before, *::after { margin: 0; padding: 0; }
 
-:root {
-  --border: #e8e8e8;
-  --bg:     #ffffff;
-  --bg-off: #f7f7f7;
-  --bg-ia:  #fafafa;
-  --text:   #111111;
-  --mid:    #555555;
-  --dim:    #aaaaaa;
-  --hover:  #f0f0f0;
-  --font:   'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  --sidebar-w: 240px;
-}
+:root { --sidebar-w: 260px; }   /* colores y fuente: tokens.css */
 
-/* ── Modo oscuro (sincronizado desde el chat principal — ver live.js) ── */
-[data-theme="dark"] {
-  --border: #2e2e2e;
-  --bg:     #111111;
-  --bg-off: #1a1a1a;
-  --bg-ia:  #161616;
-  --text:   #e8e8e8;
-  --mid:    #999999;
-  --dim:    #666666;
-  --hover:  #1e1e1e;
-}
-[data-theme="dark"] .lv-video-card.active { background: #1c1c1c; border-left-color: #e8e8e8; }
-[data-theme="dark"] .lv-card-thumb { background: #222; }
-[data-theme="dark"] .lv-badge-past { background: #262626; color: #999; }
-[data-theme="dark"] .lv-scroll-btn { background: #e8e8e8; color: #111; }
-[data-theme="dark"] .lv-scroll-btn:hover { background: #fff; }
-[data-theme="dark"] .lv-head-btn--pdf  { border-color: #5c2626; }
-[data-theme="dark"] .lv-head-btn--pdf:hover  { background: rgba(197,48,48,0.16); }
-[data-theme="dark"] .lv-head-btn--word { border-color: #234462; }
-[data-theme="dark"] .lv-head-btn--word:hover { background: rgba(43,108,176,0.16); }
+.lv-scroll-btn { background: var(--d-text); color: var(--d-surface); }
+.lv-head-btn--pdf, .lv-head-btn--word { border-color: var(--d-line-strong); }
 
 html { transition: background 0.2s, color 0.2s; }
-html, body { height: 100%; font-family: var(--font); background: var(--bg); color: var(--text); font-size: 14px; overflow: hidden; }
+html, body { height: 100%; background: var(--d-bg); overflow: hidden; }
 
 /* ── Root layout ─────────────────────────────────────── */
 .lv-layout {
@@ -119,14 +90,14 @@ html, body { height: 100%; font-family: var(--font); background: var(--bg); colo
   border-left: 3px solid transparent;
 }
 .lv-video-card:hover { background: var(--hover); }
-.lv-video-card.active { background: #fff; border-left-color: #111; }
+.lv-video-card.active { background: var(--d-surface); border-left-color: var(--d-accent); }
 
 .lv-card-thumb {
   width: 100%;
   aspect-ratio: 16/9;
   border-radius: 6px;
   object-fit: cover;
-  background: #eee;
+  background: var(--d-hover);
 }
 
 .lv-card-meta {
@@ -139,7 +110,7 @@ html, body { height: 100%; font-family: var(--font); background: var(--bg); colo
 .lv-badge-live {
   font-size: 10px;
   font-weight: 800;
-  background: #ef4444;
+  background: var(--d-danger);
   color: #fff;
   padding: 1px 6px;
   border-radius: 4px;
@@ -149,8 +120,7 @@ html, body { height: 100%; font-family: var(--font); background: var(--bg); colo
 .lv-badge-past {
   font-size: 10px;
   font-weight: 700;
-  background: #f3f4f6;
-  color: #666;
+  background: var(--d-hover); color: var(--d-text-2);
   padding: 1px 6px;
   border-radius: 4px;
 }
@@ -253,8 +223,8 @@ html, body { height: 100%; font-family: var(--font); background: var(--bg); colo
   flex-shrink: 0;
   transition: background 0.3s;
 }
-.lv-indicator-dot.live        { background: #ef4444; animation: pulse 1.4s infinite; }
-.lv-indicator-dot.transcribing{ background: #22c55e; animation: pulse 1.4s infinite; }
+.lv-indicator-dot.live        { background: var(--d-danger); animation: pulse 1.4s infinite; }
+.lv-indicator-dot.transcribing{ background: var(--d-ok); animation: pulse 1.4s infinite; }
 @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
 
 .lv-action-btn {
@@ -273,10 +243,10 @@ html, body { height: 100%; font-family: var(--font); background: var(--bg); colo
   transition: background 0.15s;
 }
 .lv-action-btn svg { width: 13px; height: 13px; }
-.lv-btn-start { background: #22c55e; color: #fff; }
-.lv-btn-start:hover { background: #16a34a; }
-.lv-btn-stop  { background: #fee2e2; color: #c53030; }
-.lv-btn-stop:hover { background: #fecaca; }
+.lv-btn-start { background: var(--d-accent); color: #fff; }
+.lv-btn-start:hover { background: var(--d-accent-hover); }
+.lv-btn-stop  { background: var(--d-danger-soft); color: var(--d-danger); }
+.lv-btn-stop:hover { background: var(--d-danger-soft); filter: brightness(.95); }
 
 /* ── Col 2: IA ───────────────────────────────────────── */
 .lv-col-ia { background: var(--bg-ia); }
@@ -416,8 +386,8 @@ html, body { height: 100%; font-family: var(--font); background: var(--bg); colo
 .lv-menu-item:disabled { opacity: 0.5; cursor: default; background: none; }
 .lv-menu-item svg { width: 13px; height: 13px; flex-shrink: 0; }
 
-.lv-menu-item--pdf  { color: #c53030; }
-.lv-menu-item--word { color: #2b6cb0; }
+.lv-menu-item--pdf  { color: var(--d-danger); }
+.lv-menu-item--word { color: var(--d-info); }
 
 .lv-transcript-body { flex: 1; overflow-y: auto; padding: 11px 13px; }
 
@@ -451,7 +421,7 @@ html, body { height: 100%; font-family: var(--font); background: var(--bg); colo
   position: absolute;
   bottom: 12px; right: 12px;
   padding: 6px 13px;
-  background: #111; color: #fff;
+  background: var(--d-text); color: var(--d-surface);
   border: none; border-radius: 18px;
   font-size: 12px; font-weight: 700; font-family: var(--font);
   cursor: pointer;
@@ -459,7 +429,7 @@ html, body { height: 100%; font-family: var(--font); background: var(--bg); colo
   z-index: 10;
   transition: background 0.15s;
 }
-.lv-scroll-btn:hover { background: #333; }
+.lv-scroll-btn:hover { background: var(--d-text-2); }
 
 /* ── Shared empty state ──────────────────────────────── */
 .lv-col-empty {
@@ -483,7 +453,7 @@ html, body { height: 100%; font-family: var(--font); background: var(--bg); colo
 .lv-saved-card .lv-card-title { margin: 0 0 3px; }
 .lv-saved-meta { display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 11px; color: var(--mid); font-variant-numeric: tabular-nums; }
 .lv-saved-del { border: none; background: none; color: var(--dim); font-size: 16px; line-height: 1; cursor: pointer; padding: 0 4px; border-radius: 4px; }
-.lv-saved-del:hover, .lv-saved-del:focus-visible { color: #c53030; background: var(--hover); }
+.lv-saved-del:hover, .lv-saved-del:focus-visible { color: var(--d-danger); background: var(--hover); }
 
 /* ── Marcas de tiempo que llevan al momento del video ── */
 .lv-ts-link { cursor: pointer; border-radius: 3px; }

@@ -203,3 +203,39 @@ async def test_settings_ai_test_traduce_key_invalida(client):
         r = await client.post("/settings/ai/test", json={"provider": "gemini", "api_key": "mala"})
     body = r.json()
     assert body["ok"] is False and "no es válida para Gemini" in body["error"]
+
+
+# ── /inicio y /agenda (pantallas del rediseño) ────────────────────────────────
+@pytest.fixture(autouse=False)
+def sin_cache_vistas():
+    import routers.pages as pages
+    pages._CACHE_VISTAS.clear()
+    yield
+    pages._CACHE_VISTAS.clear()
+
+
+@pytest.mark.asyncio
+async def test_inicio_informa_la_fuente_que_fallo(client, sin_cache_vistas):
+    agenda = {"sesiones": [
+        {"fecha": "01/01/2099", "hora": "9:00 AM", "tema": "Futura", "camara": "Senado"},
+        {"fecha": "01/01/2000", "hora": "9:00 AM", "tema": "Pasada", "camara": "Senado"},
+        {"fecha": "", "hora": "", "tema": "Sin fecha", "camara": "Senado"},
+    ]}
+    with patch("routers.pages.fetch_agenda_camaras", AsyncMock(return_value=agenda)), \
+         patch("routers.pages.fetch_proyectos", AsyncMock(side_effect=RuntimeError("SPLEY caído"))):
+        r = (await client.get("/inicio")).json()
+    assert [s["tema"] for s in r["agenda"]] == ["Futura"]   # ni pasadas ni sin fecha
+    assert r["proyectos"] is None
+    assert r["fallas"] == ["SPLEY (proyectos de ley)"]
+
+
+@pytest.mark.asyncio
+async def test_agenda_ordena_y_no_inventa_fechas(client, sin_cache_vistas):
+    agenda = {"sesiones": [
+        {"fecha": "02/01/2099", "hora": "3:00 PM", "tema": "B", "camara": "Diputados"},
+        {"fecha": "02/01/2099", "hora": "9:00 AM", "tema": "A", "camara": "Senado"},
+        {"fecha": "??", "hora": "", "tema": "X", "camara": "Senado"},
+    ]}
+    with patch("routers.pages.fetch_agenda_camaras", AsyncMock(return_value=agenda)):
+        r = (await client.get("/agenda", params={"dias": 14})).json()
+    assert [s["tema"] for s in r["sesiones"]] == ["A", "B"]

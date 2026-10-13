@@ -8,10 +8,12 @@
     // Mismo localStorage que el chat principal (mismo origen) — aplica el
     // tema antes de pintar para no parpadear en claro. live.js escucha
     // cambios en vivo vía postMessage desde la ventana padre.
-    if (localStorage.getItem('congreso_dark') === '1') {
-      document.documentElement.dataset.theme = 'dark';
-    }
+    try {
+      document.documentElement.dataset.theme =
+        localStorage.getItem('congreso_dark') === '1' ? 'dark' : 'light';
+    } catch (e) { /* sin localStorage: sigue al sistema */ }
   </script>
+  <link rel="stylesheet" href="/static/tokens.css?v=1">
   <link rel="stylesheet" href="/static/live.css?v=2">
 </head>
 <body>
@@ -26,7 +28,7 @@
           <circle cx="10" cy="10" r="8"/>
           <path d="M8 7l6 3-6 3V7z" stroke-linejoin="round"/>
         </svg>
-        Sesiones
+        Canal del Congreso
       </div>
       <button id="lv-refresh-btn" class="lv-refresh-btn" title="Actualizar lista">
         <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
@@ -60,7 +62,7 @@
         <circle cx="32" cy="32" r="28"/>
         <path d="M24 22l20 10-20 10V22z" stroke-linejoin="round"/>
       </svg>
-      <p>Selecciona una sesión de la lista<br>para ver el video y transcribirlo en vivo</p>
+      <p>Elegí una sesión del canal del Congreso<br>para ver el video, transcribirla y preguntarle lo que se dijo</p>
     </div>
 
     <!-- Vista de 3 columnas (se muestra al seleccionar un video) -->

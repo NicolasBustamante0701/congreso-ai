@@ -4,9 +4,9 @@ import functools
 import threading
 
 from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 
-from config import GROQ_API_KEY, LLM_API_KEY, logger, static_file
+from config import GROQ_API_KEY, LLM_API_KEY, logger
 from scraper import fetch_videos_youtube, get_yt_captions, transcribe_with_whisper
 from services import llm, sse
 from services.prompt_registry import build_sesion_prompt
@@ -17,11 +17,6 @@ SESION_SYSTEM = (
     "Eres Diana, experta en análisis parlamentario del Congreso del Perú. "
     "Analizas transcripts de sesiones y los conviertes en resúmenes ejecutivos con tablas."
 )
-
-
-@router.get("/sessions", response_class=HTMLResponse)
-async def sessions_page():
-    return static_file("sessions.html")
 
 
 @router.get("/sesiones/cookies-status")

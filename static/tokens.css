@@ -1,0 +1,270 @@
+/* ══════════════════════════════════════════════════════════════════════════
+   Diana — sistema de diseño
+   Lo cargan todas las pantallas (app, Live, Documentos, Expediente) ANTES de
+   su propia hoja. Tokens con prefijo --d-; abajo, alias con los nombres que
+   ya usaban las hojas de cada pantalla (--white, --off, --bg, --border…),
+   para que todas tomen la misma paleta y el mismo modo oscuro sin duplicarla.
+
+   Identidad: sobria, editorial, de herramienta de investigación. Neutros
+   cálidos de papel, texto de alto contraste y un único acento — un rojo
+   peruano apagado — reservado para lo activo y lo importante. Los colores
+   semánticos (ok / aviso / error / info) solo comunican estado.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* Superficies */
+  --d-bg:          #f5f4f1;   /* fondo de la ventana */
+  --d-surface:     #ffffff;   /* paneles, tarjetas */
+  --d-surface-2:   #fafaf8;   /* zonas secundarias dentro de un panel */
+  --d-hover:       #efede8;
+  --d-active:      #e8e5de;
+  --d-line:        #e3e0da;
+  --d-line-strong: #cfcbc2;
+
+  /* Texto */
+  --d-text:   #17171a;
+  --d-text-2: #4a4a52;
+  --d-text-3: #7b7b85;
+  --d-text-inverse: #ffffff;
+
+  /* Acento (rojo peruano sobrio) */
+  --d-accent:       #a8172f;
+  --d-accent-hover: #8c1227;
+  --d-accent-rgb:   168, 23, 47;
+  --d-accent-soft:  rgba(168, 23, 47, 0.08);
+  --d-accent-line:  rgba(168, 23, 47, 0.28);
+
+  /* Estados */
+  --d-ok:      #1f7a4d;  --d-ok-soft:      rgba(31, 122, 77, 0.10);
+  --d-warn:    #9a5b00;  --d-warn-soft:    rgba(154, 91, 0, 0.10);
+  --d-danger:  #b42318;  --d-danger-soft:  rgba(180, 35, 24, 0.09);
+  --d-info:    #2456b8;  --d-info-soft:    rgba(36, 86, 184, 0.09);
+
+  /* Tipografía */
+  --d-font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", Roboto, sans-serif;
+  --d-font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", "Segoe UI", sans-serif;
+  --d-font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --d-fs-xs: 11.5px;   /* metadatos, etiquetas */
+  --d-fs-sm: 12.5px;   /* texto secundario */
+  --d-fs-md: 14px;     /* texto principal */
+  --d-fs-lg: 16px;     /* subtítulos */
+  --d-fs-xl: 20px;     /* título de sección */
+  --d-fs-2xl: 26px;    /* encabezado de pantalla */
+
+  /* Forma y espacio */
+  --d-r-sm: 6px;
+  --d-r-md: 10px;
+  --d-r-lg: 14px;
+  --d-space-1: 4px;  --d-space-2: 8px;  --d-space-3: 12px;
+  --d-space-4: 16px; --d-space-5: 24px; --d-space-6: 32px;
+  --d-shadow-1: 0 1px 2px rgba(23, 23, 26, 0.06);
+  --d-shadow-2: 0 6px 24px rgba(23, 23, 26, 0.10), 0 1px 3px rgba(23, 23, 26, 0.06);
+  --d-ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --d-dur: 160ms;
+  --d-focus: 0 0 0 3px var(--d-accent-line);
+
+  color-scheme: light;
+}
+
+/* Modo oscuro: por preferencia del sistema salvo que el usuario haya elegido
+   claro u oscuro a mano (data-theme en <html>, ver app.js aplicarTema). */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --d-bg: #121214; --d-surface: #19191c; --d-surface-2: #1e1e22;
+    --d-hover: #24242a; --d-active: #2b2b32; --d-line: #2a2a30; --d-line-strong: #3b3b43;
+    --d-text: #ececef; --d-text-2: #b5b5bd; --d-text-3: #888892; --d-text-inverse: #111113;
+    --d-accent: #e05a6f; --d-accent-hover: #ea7586; --d-accent-rgb: 224, 90, 111;
+    --d-accent-soft: rgba(224, 90, 111, 0.14); --d-accent-line: rgba(224, 90, 111, 0.40);
+    --d-ok: #4cc28a; --d-ok-soft: rgba(76, 194, 138, 0.14);
+    --d-warn: #e0a54a; --d-warn-soft: rgba(224, 165, 74, 0.14);
+    --d-danger: #f07167; --d-danger-soft: rgba(240, 113, 103, 0.14);
+    --d-info: #7aa2f7; --d-info-soft: rgba(122, 162, 247, 0.14);
+    --d-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --d-shadow-2: 0 10px 30px rgba(0, 0, 0, 0.45);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --d-bg: #121214; --d-surface: #19191c; --d-surface-2: #1e1e22;
+  --d-hover: #24242a; --d-active: #2b2b32; --d-line: #2a2a30; --d-line-strong: #3b3b43;
+  --d-text: #ececef; --d-text-2: #b5b5bd; --d-text-3: #888892; --d-text-inverse: #111113;
+  --d-accent: #e05a6f; --d-accent-hover: #ea7586; --d-accent-rgb: 224, 90, 111;
+  --d-accent-soft: rgba(224, 90, 111, 0.14); --d-accent-line: rgba(224, 90, 111, 0.40);
+  --d-ok: #4cc28a; --d-ok-soft: rgba(76, 194, 138, 0.14);
+  --d-warn: #e0a54a; --d-warn-soft: rgba(224, 165, 74, 0.14);
+  --d-danger: #f07167; --d-danger-soft: rgba(240, 113, 103, 0.14);
+  --d-info: #7aa2f7; --d-info-soft: rgba(122, 162, 247, 0.14);
+  --d-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --d-shadow-2: 0 10px 30px rgba(0, 0, 0, 0.45);
+  color-scheme: dark;
+}
+
+/* ── Alias para las hojas de cada pantalla ───────────────────────────────── */
+:root {
+  --white: var(--d-surface);   --off: var(--d-bg);
+  --bg: var(--d-surface);      --bg-off: var(--d-bg);   --bg-ia: var(--d-surface-2);
+  --border: var(--d-line);     --text: var(--d-text);
+  --mid: var(--d-text-2);      --dim: var(--d-text-3);
+  --hover: var(--d-hover);     --active-bg: var(--d-active);
+  --accent: var(--d-accent);   --accent-rgb: var(--d-accent-rgb);
+  --accent-hover: var(--d-accent-hover);
+  --font: var(--d-font);
+}
+
+/* ── Base ─────────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+/* Un componente con display propio (flex, grid) le ganaba al atributo hidden:
+   el diálogo "oculto" quedaba encima de todo y se tragaba los clics. */
+[hidden] { display: none !important; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--d-bg);
+  color: var(--d-text);
+  font: var(--d-fs-md)/1.5 var(--d-font);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+button, input, select, textarea { font: inherit; color: inherit; }
+:focus-visible { outline: none; box-shadow: var(--d-focus); }
+::selection { background: var(--d-accent-soft); }
+.tabular { font-variant-numeric: tabular-nums; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* Scrollbars discretas */
+* { scrollbar-width: thin; scrollbar-color: var(--d-line-strong) transparent; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--d-line-strong); border-radius: 10px; border: 3px solid transparent; background-clip: padding-box; }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* ── Componentes ──────────────────────────────────────────────────────────── */
+.d-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  height: 32px; padding: 0 12px; border-radius: var(--d-r-sm);
+  border: 1px solid var(--d-line-strong); background: var(--d-surface); color: var(--d-text);
+  font-size: var(--d-fs-sm); font-weight: 600; cursor: pointer; white-space: nowrap;
+  transition: background var(--d-dur) var(--d-ease), border-color var(--d-dur), color var(--d-dur);
+}
+.d-btn:hover { background: var(--d-hover); }
+.d-btn:disabled { opacity: .5; cursor: default; }
+.d-btn svg { width: 15px; height: 15px; flex-shrink: 0; }
+.d-btn--primary { background: var(--d-accent); border-color: var(--d-accent); color: #fff; }
+.d-btn--primary:hover { background: var(--d-accent-hover); border-color: var(--d-accent-hover); }
+.d-btn--ghost { background: transparent; border-color: transparent; color: var(--d-text-2); }
+.d-btn--ghost:hover { background: var(--d-hover); color: var(--d-text); }
+.d-btn--danger { color: var(--d-danger); }
+.d-btn--sm { height: 26px; padding: 0 9px; font-size: var(--d-fs-xs); }
+.d-icon-btn {
+  display: inline-grid; place-items: center; width: 32px; height: 32px; border-radius: var(--d-r-sm);
+  border: none; background: transparent; color: var(--d-text-2); cursor: pointer;
+  transition: background var(--d-dur), color var(--d-dur);
+}
+.d-icon-btn:hover { background: var(--d-hover); color: var(--d-text); }
+.d-icon-btn svg { width: 18px; height: 18px; }
+
+.d-input, .d-select, .d-textarea {
+  width: 100%; height: 36px; padding: 0 12px; border-radius: var(--d-r-sm);
+  border: 1px solid var(--d-line-strong); background: var(--d-surface); color: var(--d-text);
+  font-size: var(--d-fs-md); transition: border-color var(--d-dur), box-shadow var(--d-dur);
+}
+.d-textarea { height: auto; padding: 10px 12px; resize: vertical; }
+.d-input::placeholder, .d-textarea::placeholder { color: var(--d-text-3); }
+.d-input:focus, .d-select:focus, .d-textarea:focus { outline: none; border-color: var(--d-accent); box-shadow: var(--d-focus); }
+.d-label { display: block; font-size: var(--d-fs-sm); font-weight: 600; color: var(--d-text-2); margin: 0 0 6px; }
+.d-hint { font-size: var(--d-fs-xs); color: var(--d-text-3); margin-top: 6px; }
+
+.d-card {
+  background: var(--d-surface); border: 1px solid var(--d-line); border-radius: var(--d-r-md);
+}
+.d-card-head {
+  display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--d-line);
+}
+.d-card-title { font-size: var(--d-fs-sm); font-weight: 700; letter-spacing: .01em; margin: 0; }
+.d-card-sub { font-size: var(--d-fs-xs); color: var(--d-text-3); margin-left: auto; }
+.d-card-body { padding: 14px 16px; }
+
+.d-badge {
+  display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 7px;
+  border-radius: 999px; font-size: 11px; font-weight: 600; white-space: nowrap;
+  background: var(--d-hover); color: var(--d-text-2);
+}
+.d-badge--accent { background: var(--d-accent-soft); color: var(--d-accent); }
+.d-badge--ok     { background: var(--d-ok-soft); color: var(--d-ok); }
+.d-badge--warn   { background: var(--d-warn-soft); color: var(--d-warn); }
+.d-badge--danger { background: var(--d-danger-soft); color: var(--d-danger); }
+.d-badge--info   { background: var(--d-info-soft); color: var(--d-info); }
+.d-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
+
+.d-empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center;
+  gap: 8px; padding: 32px 20px; color: var(--d-text-3); font-size: var(--d-fs-sm);
+}
+.d-empty strong { color: var(--d-text-2); font-size: var(--d-fs-md); }
+.d-empty svg { width: 34px; height: 34px; opacity: .55; }
+
+.d-alert {
+  display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: var(--d-r-sm);
+  font-size: var(--d-fs-sm); background: var(--d-warn-soft); color: var(--d-text);
+  border: 1px solid color-mix(in srgb, var(--d-warn) 30%, transparent);
+}
+.d-alert--danger { background: var(--d-danger-soft); border-color: color-mix(in srgb, var(--d-danger) 30%, transparent); }
+.d-alert--ok { background: var(--d-ok-soft); border-color: color-mix(in srgb, var(--d-ok) 30%, transparent); }
+.d-alert--info { background: var(--d-info-soft); border-color: color-mix(in srgb, var(--d-info) 30%, transparent); }
+
+.d-skeleton {
+  display: block; height: 12px; border-radius: 4px; background: var(--d-hover);
+  background-image: linear-gradient(90deg, transparent, rgba(255,255,255,.35), transparent);
+  background-size: 200% 100%; animation: d-shimmer 1.4s infinite linear;
+}
+@keyframes d-shimmer { from { background-position: 150% 0; } to { background-position: -50% 0; } }
+.d-spinner {
+  width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0;
+  border: 2px solid var(--d-line-strong); border-top-color: var(--d-accent);
+  animation: d-spin .8s linear infinite;
+}
+@keyframes d-spin { to { transform: rotate(360deg); } }
+
+.d-table-wrap { overflow-x: auto; border: 1px solid var(--d-line); border-radius: var(--d-r-sm); }
+.d-table { width: 100%; border-collapse: collapse; font-size: var(--d-fs-sm); }
+.d-table th { text-align: left; font-weight: 600; color: var(--d-text-2); background: var(--d-surface-2);
+  padding: 8px 12px; border-bottom: 1px solid var(--d-line); white-space: nowrap; }
+.d-table td { padding: 8px 12px; border-bottom: 1px solid var(--d-line); vertical-align: top; }
+.d-table tr:last-child td { border-bottom: none; }
+
+.d-dialog-backdrop {
+  position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center;
+  background: rgba(10, 10, 12, .42); padding: 20px;
+}
+.d-dialog {
+  width: min(560px, 100%); max-height: calc(100vh - 40px); overflow: auto;
+  background: var(--d-surface); border: 1px solid var(--d-line); border-radius: var(--d-r-lg);
+  box-shadow: var(--d-shadow-2); padding: 22px;
+}
+.d-dialog h2 { margin: 0 0 4px; font: 700 var(--d-fs-lg) var(--d-font-display); }
+.d-dialog p { margin: 0 0 16px; color: var(--d-text-2); font-size: var(--d-fs-sm); }
+
+/* ── Contenido Markdown (respuestas de Diana, informes) ───────────────────── */
+.md { font-size: var(--d-fs-md); line-height: 1.62; color: var(--d-text); overflow-wrap: anywhere; }
+.md > :first-child { margin-top: 0; }
+.md > :last-child { margin-bottom: 0; }
+.md p { margin: 0 0 10px; }
+.md h1, .md h2, .md h3, .md h4 { font-family: var(--d-font-display); line-height: 1.3; margin: 18px 0 8px; }
+.md h1 { font-size: 19px; } .md h2 { font-size: 17px; } .md h3 { font-size: 15px; } .md h4 { font-size: 14px; }
+.md ul, .md ol { margin: 0 0 10px; padding-left: 22px; }
+.md li { margin: 3px 0; }
+.md a { color: var(--d-accent); text-decoration: none; border-bottom: 1px solid var(--d-accent-line); }
+.md a:hover { border-bottom-color: var(--d-accent); }
+.md strong { font-weight: 650; }
+.md code { font: 12.5px var(--d-font-mono); background: var(--d-hover); padding: 1px 5px; border-radius: 4px; }
+.md pre { background: var(--d-surface-2); border: 1px solid var(--d-line); padding: 10px 12px; border-radius: var(--d-r-sm); overflow-x: auto; }
+.md pre code { background: none; padding: 0; }
+.md blockquote { margin: 0 0 10px; padding: 2px 0 2px 12px; border-left: 3px solid var(--d-line-strong); color: var(--d-text-2); }
+.md hr { border: none; border-top: 1px solid var(--d-line); margin: 16px 0; }
+.md table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 4px 0 12px; font-variant-numeric: tabular-nums; }
+.md th { text-align: left; font-weight: 650; background: var(--d-surface-2); color: var(--d-text);
+  padding: 7px 10px; border: 1px solid var(--d-line); }
+.md td { padding: 7px 10px; border: 1px solid var(--d-line); vertical-align: top; }
+.md tr:nth-child(even) td { background: color-mix(in srgb, var(--d-surface-2) 60%, transparent); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}

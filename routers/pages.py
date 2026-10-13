@@ -2,10 +2,10 @@
 import asyncio
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi import APIRouter, Query
+from fastapi.responses import HTMLResponse
 
-from config import LLM_API_KEY, STATIC_DIR, static_file
+from config import LLM_API_KEY, ahora_lima, static_file
 from scraper import fetch_agenda_camaras, fetch_destacados, fetch_proyectos
 
 router = APIRouter()
@@ -133,10 +133,85 @@ async def root():
     return static_file("index.html")
 
 
-@router.get("/static/sw.js")
-async def service_worker():
-    return FileResponse(
-        STATIC_DIR / "sw.js",
-        media_type="application/javascript",
-        headers={"Service-Worker-Allowed": "/"},
-    )
+# ── Inicio y Agenda (pantallas del rediseño) ─────────────────────────────────
+# Mismas fuentes que el chat (scrapers oficiales). Cada fuente que falla se
+# informa en "fallas" en vez de mostrarse vacía como si no hubiera nada.
+_CACHE_VISTAS: dict = {}
+_TTL_VISTAS = 300
+
+
+def _etiqueta_dia(dt: datetime, hoy) -> str:
+    if dt.date() == hoy:
+        return "Hoy"
+    if (dt.date() - hoy).days == 1:
+        return "Mañana"
+    return f"{dt.day} {_MESES_CORTOS[dt.month]}"
+
+
+def _sesiones_ordenadas(agenda: dict, solo_futuras: bool) -> list[dict]:
+    ahora = ahora_lima()
+    filas = []
+    for s in agenda.get("sesiones", []):
+        dt = _parse_fecha_hora(s.get("fecha", ""), s.get("hora", ""))
+        if dt is None:
+            continue   # sin fecha/hora verificable no se muestra
+        if solo_futuras and dt < ahora - timedelta(hours=1):
+            continue
+        filas.append((dt, {**s, "iso": dt.isoformat(), "dia": _etiqueta_dia(dt, ahora.date())}))
+    filas.sort(key=lambda p: p[0])
+    return [s for _, s in filas]
+
+
+async def _cacheado(clave: str, producir):
+    ahora = datetime.now()
+    hit = _CACHE_VISTAS.get(clave)
+    if hit and ahora < hit[0]:
+        return hit[1]
+    valor = await producir()
+    _CACHE_VISTAS[clave] = (ahora + timedelta(seconds=_TTL_VISTAS), valor)
+    return valor
+
+
+@router.get("/inicio")
+async def inicio():
+    async def producir():
+        agenda, proyectos = await asyncio.gather(
+            fetch_agenda_camaras(dias=7), fetch_proyectos(dias=7, limit=6),
+            return_exceptions=True)
+        fallas = []
+        sesiones = []
+        if isinstance(agenda, dict) and not agenda.get("error"):
+            sesiones = _sesiones_ordenadas(agenda, solo_futuras=True)[:6]
+        else:
+            fallas.append("Agenda de comunicaciones.congreso.gob.pe")
+        recientes = None
+        if isinstance(proyectos, dict) and not proyectos.get("error") and "items" in proyectos:
+            recientes = {
+                "total": proyectos.get("total_disponible") or proyectos.get("total", 0),
+                "dias": 7,
+                "items": [{k: p.get(k, "") for k in
+                           ("numero", "titulo", "fecha_presentacion", "camara", "estado", "enlace")}
+                          for p in proyectos["items"][:6]],
+            }
+        elif isinstance(proyectos, dict) and proyectos.get("sin_datos"):
+            recientes = {"total": 0, "dias": 7, "items": []}
+        else:
+            fallas.append("SPLEY (proyectos de ley)")
+        return {"actualizado": ahora_lima().strftime("%d/%m/%Y %H:%M"),
+                "agenda": sesiones, "proyectos": recientes, "fallas": fallas}
+    return await _cacheado("inicio", producir)
+
+
+@router.get("/agenda")
+async def agenda(dias: int = Query(14, ge=1, le=31)):
+    async def producir():
+        try:
+            r = await fetch_agenda_camaras(dias=dias)
+        except Exception as e:
+            return {"error": f"No se pudo consultar la agenda: {type(e).__name__}"}
+        if not isinstance(r, dict) or r.get("error"):
+            return {"error": (r or {}).get("error", "No se pudo consultar la agenda.")}
+        return {"fuente": r.get("fuente", "comunicaciones.congreso.gob.pe/agenda"),
+                "actualizado": ahora_lima().strftime("%d/%m/%Y %H:%M"),
+                "sesiones": _sesiones_ordenadas(r, solo_futuras=False)}
+    return await _cacheado(f"agenda:{dias}", producir)
