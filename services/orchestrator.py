@@ -14,10 +14,11 @@ ya formateados (ver services/sse.py).
 import asyncio
 import json
 import re
+import time
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 
-from config import logger
+from config import ahora_lima, logger
 from scraper import fetch_transcript_youtube
 from services import llm, sse
 from services.observability import timed
@@ -306,7 +307,7 @@ class ChatOrchestrator:
 
     def __init__(self, messages: list):
         self.messages = messages or []
-        ahora = datetime.now()
+        ahora = ahora_lima()
         self.hoy = ahora.strftime("%d/%m/%Y")
         # Ventana del resumen semanal: los 7 días que terminan hoy.
         self.desde = (ahora - timedelta(days=RESUMEN_DIAS)).strftime("%d/%m/%Y")
@@ -785,13 +786,29 @@ class ChatOrchestrator:
         Cualquier excepción termina en un evento de error legible: sin esto el
         stream se cortaba a mitad y el frontend se quedaba sin saber qué pasó.
         """
+        inicio = time.monotonic()
+        primer_texto = None
+        resultado = "ok"
         try:
             async for ev in self._run():
+                if primer_texto is None and ev.startswith('data: {"text"'):
+                    primer_texto = time.monotonic() - inicio
                 yield ev
+        except (GeneratorExit, asyncio.CancelledError):
+            resultado = "cancelado"
+            raise
         except Exception as e:
+            resultado = "error"
             logger.exception("Chat falló (último mensaje: %.120r)", self.last_msg)
             yield sse.error(llm.friendly_error(e))
             yield sse.DONE
+        finally:
+            # Una línea por vuelta con lo que importa para la línea base de
+            # rendimiento (scripts/medir_chat.py la lee del log): cuánto tardó
+            # el usuario en ver texto y cuánto la respuesta entera.
+            logger.info("CHAT_METRICA resultado=%s primer_texto=%s total=%.2fs herramientas=%s",
+                        resultado, f"{primer_texto:.2f}s" if primer_texto is not None else "-",
+                        time.monotonic() - inicio, ",".join(map(str, self.tools_usados)) or "-")
 
     async def _run(self):
         self._analyze()

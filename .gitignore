@@ -13,3 +13,4 @@ out/
 # un `npm run build` local dejaba el DMG y el .app sin ignorar.
 release/
 .DS_Store
+scripts/out/

@@ -5,6 +5,7 @@ Todo lo que antes vivía disperso en la cabecera de server.py se centraliza aqu�
 para que routers/ y services/ no dependan del módulo de arranque.
 """
 import contextvars
+import datetime
 import logging
 import os
 import sys
@@ -199,6 +200,23 @@ MAIN_MODEL    = _provider_cfg["main_model"]
 # ── Servidor ─────────────────────────────────────────────────────────────────
 PORT         = int(os.getenv("PORT", 8732))
 ALLOWED_ORIGIN = f"http://localhost:{PORT}"
+
+
+# Perú no tiene horario de verano: UTC-5 fijo es exacto y no depende de que
+# el sistema (o el bundle de PyInstaller) traiga la base tzdata.
+LIMA_TZ = datetime.timezone(datetime.timedelta(hours=-5), "America/Lima")
+
+
+def ahora_lima() -> "datetime.datetime":
+    """
+    Fecha y hora actual en Lima, sin tzinfo (naive).
+
+    Naive a propósito: SPLEY y los portales devuelven fechas sin huso, y
+    compararlas contra la hora local de la Mac (o contra UTC, como hacía
+    fetch_proyectos con utcnow) corría la ventana de días hasta 5 horas: de
+    noche en Lima, "hoy" en UTC ya era mañana.
+    """
+    return datetime.datetime.now(LIMA_TZ).replace(tzinfo=None)
 
 
 def load_prompt(name: str) -> str:

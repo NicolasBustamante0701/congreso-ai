@@ -23,6 +23,8 @@ from datetime import date, datetime
 
 from bs4 import BeautifulSoup
 
+from config import ahora_lima
+
 TIMEOUT = 25
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -625,14 +627,14 @@ async def fetch_proyectos(autor=None, comision=None, numero=None, materia=None,
                     # ítems del propio día límite según a qué hora se
                     # corriera la consulta — un proyecto de "hoy 00:00" podía
                     # quedar afuera de "últimos 15 días" si ya eran las 11pm.
-                    hoy_medianoche = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+                    hoy_medianoche = ahora_lima().replace(hour=0, minute=0, second=0, microsecond=0)
                     cutoff = hoy_medianoche - timedelta(days=int(dias))
                     def _parse_raw(s):
                         for fmt in ("%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"):
                             try:
                                 return datetime.strptime(str(s)[:19], fmt)
-                            except Exception as _e:
-                                logger.debug("scraper silenced: %s", _e)
+                            except ValueError:
+                                continue   # probar el siguiente formato
                         return None
                     items = [p for p in items
                              if _parse_raw(p.get("fecPresentacion") or "") is not None
@@ -648,7 +650,7 @@ async def fetch_proyectos(autor=None, comision=None, numero=None, materia=None,
                                 materia=materia, dias=dias)}
                 return _format_proyectos(items[:limit], total_disponible=len(items))
         except Exception as _e:
-            logger.debug("scraper silenced: %s", _e)
+            logger.warning("fetch_proyectos: %s: %s", type(_e).__name__, _e)
 
         return {
             "error": "No se pudo conectar con el sistema SPLEY del Congreso. "
@@ -801,7 +803,7 @@ async def fetch_sesiones(comision=None, fecha=None, limit=20):
                 return {"fuente": "congreso.gob.pe/comisiones2020 (HTML)",
                         "total": len(items), "items": items}
     except Exception as _e:
-        logger.debug("scraper silenced: %s", _e)
+        logger.warning("fetch_sesiones: %s: %s", type(_e).__name__, _e)
 
     return {
         "error": "No se pudo obtener información de sesiones. "
@@ -836,7 +838,7 @@ async def fetch_agenda():
                 return {"fuente": "congreso.gob.pe",
                         "contenido": "\n".join(lines[:60])}
     except Exception as _e:
-        logger.debug("scraper silenced: %s", _e)
+        logger.warning("fetch_agenda: %s: %s", type(_e).__name__, _e)
 
     return {
         "error": "No se pudo obtener la agenda parlamentaria. "
@@ -1061,9 +1063,17 @@ async def fetch_estado_proyecto(numero: str):
                         "fuente":        "SPLEY — api.congreso.gob.pe",
                     }
         except Exception as _e:
-            logger.debug("scraper silenced: %s", _e)
+            # Un fallo de red NO es "no existe": antes las dos cosas salían con
+            # el mismo "No se encontró el proyecto" y el modelo afirmaba que el
+            # número era incorrecto cuando SPLEY simplemente no respondió.
+            logger.warning("fetch_estado_proyecto: %s: %s", type(_e).__name__, _e)
+            return {"error": "No se pudo consultar SPLEY en este momento "
+                             f"({type(_e).__name__}). No se sabe si el proyecto '{numero}' existe."}
 
-    return {"error": f"No se encontró el proyecto '{numero}'. Verifica el número e intenta de nuevo."}
+    return {"sin_datos": True,
+            "mensaje": (f"El proyecto '{numero}' no está entre los 300 más recientes de SPLEY. "
+                        "Puede ser más antiguo o el número puede estar mal: probá con "
+                        "fetch_expediente, que consulta el expediente directo.")}
 
 
 # ── Videos YouTube del Congreso ────────────────────────────────
@@ -1418,7 +1428,7 @@ async def fetch_expediente(numero: str):
             if r.status_code == 200:
                 return r.json().get("data", {})
         except Exception as _e:
-            logger.debug("scraper silenced: %s", _e)
+            logger.warning("fetch_expediente: %s: %s", type(_e).__name__, _e)
         return {}
 
     async with _client() as c:
@@ -1702,7 +1712,7 @@ async def fetch_agenda_comisiones(dias: int = 2, comision: str = None):
     """
     from datetime import timedelta
 
-    today = datetime.now().date()
+    today = ahora_lima().date()
     limite = today + timedelta(days=max(dias, 1))
 
     async with _client() as c:
@@ -1833,7 +1843,7 @@ async def fetch_agenda_pleno():
     # puede presentar una agenda de hace semanas como si fuera la de "hoy".
     fecha_doc = _fecha_desde_titulo_es(titulo)
     if fecha_doc:
-        dias = (date.today() - fecha_doc).days
+        dias = (ahora_lima().date() - fecha_doc).days
         if dias > 14:
             resultado["advertencia_desactualizado"] = (
                 f"Esta es la Agenda del Pleno MÁS RECIENTE publicada, pero es del "
@@ -2071,7 +2081,7 @@ async def fetch_agenda_camaras(dias: int = 2, camara: str = None):
     """
     from datetime import timedelta
 
-    today = datetime.now().date()
+    today = ahora_lima().date()
 
     async def _un_dia(c, dia):
         sesiones_dia = []

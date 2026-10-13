@@ -6,13 +6,14 @@ subconjunto que genera el modelo en sus respuestas.
 """
 import io
 import re
-from datetime import datetime
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
+
+from config import ahora_lima
 
 GREY = RGBColor(0x88, 0x88, 0x88)
 WHITE = RGBColor(0xFF, 0xFF, 0xFF)
@@ -157,7 +158,7 @@ def markdown_to_docx(md: str) -> bytes:
     _add_banner(
         doc,
         f"Generado por Diana — Sistema de Monitoreo Parlamentario · "
-        f"{datetime.now().strftime('%d/%m/%Y')}",
+        f"{ahora_lima().strftime('%d/%m/%Y')}",
     )
 
     buf = io.BytesIO()
@@ -166,4 +167,4 @@ def markdown_to_docx(md: str) -> bytes:
 
 
 def export_filename() -> str:
-    return f"Resumen-Congreso-{datetime.now().strftime('%Y-%m-%d')}.docx"
+    return f"Resumen-Congreso-{ahora_lima().strftime('%Y-%m-%d')}.docx"
