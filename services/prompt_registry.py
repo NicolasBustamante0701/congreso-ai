@@ -49,7 +49,7 @@ FECHA_NOTA = (
     "{estado_legislativo} "
     "Si una herramienta no devuelve sesiones reales, NO digas simplemente 'no hay sesiones'. "
     "En cambio: (1) explica el motivo real usando el estado legislativo de arriba — "
-    "nunca lo adivines, ya lo sabés con certeza — (2) sugiere alternativas concretas "
+    "nunca lo adivines, ya lo sabes con certeza — (2) sugiere alternativas concretas "
     "como revisar la agenda de la semana siguiente, consultar proyectos de ley en "
     "trámite, o revisar los destacados y citaciones. Sé directo y útil, no te limites "
     "a dar una negativa seca."

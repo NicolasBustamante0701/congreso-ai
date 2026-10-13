@@ -44,7 +44,7 @@ ADVANCE_BYTES    = CHUNK_SECONDS * BYTES_PER_SEC
 MAX_SESSION_SECONDS = 12 * 60 * 60  # 12 h — backstop, no límite operativo
 
 # Whisper "alucina" (inventa texto — despedidas, subtítulos de relleno,
-# frases repetidas) cuando le mandás una ventana en silencio o casi
+# frases repetidas) cuando le mandas una ventana en silencio o casi
 # silencio: no fue entrenado para decir "no hay nada acá", así que rellena
 # con lo más probable estadísticamente. Por eso medimos el volumen ANTES de
 # llamar a la API y, si no hay suficiente señal, ni siquiera la llamamos.
@@ -430,7 +430,7 @@ async def stream_transcription(video_id: str, api_key: str, start_seconds: int =
                 estado = "ok"
 
                 if _is_silence(window):
-                    # Sin señal real: NO llamamos a Whisper. Si le mandás
+                    # Sin señal real: NO llamamos a Whisper. Si le mandas
                     # silencio igual te devuelve texto (alucina despedidas,
                     # relleno, frases repetidas) — mejor no decir nada.
                     text = ""
@@ -447,7 +447,7 @@ async def stream_transcription(video_id: str, api_key: str, start_seconds: int =
                             yield {"error": (
                                 "La key de Groq no es válida o falta. La transcripción "
                                 "usa Whisper de Groq siempre, aunque el chat esté "
-                                "configurado con otro proveedor. Pegala en Ajustes de IA "
+                                "configurado con otro proveedor. Pégala en Ajustes de IA "
                                 "(campo de Groq para transcribir)."
                             ), "fatal": True}
                             abortar = True
@@ -484,7 +484,7 @@ async def stream_transcription(video_id: str, api_key: str, start_seconds: int =
         if descarga["error"]:
             hasta = fmt_ts(start_seconds + chunk_index * CHUNK_SECONDS)
             yield {"error": f"Se cortó la descarga del audio cerca de {hasta} ({descarga['error']}). "
-                            "Lo anterior quedó guardado; podés retomar desde ahí."}
+                            "Lo anterior quedó guardado; puedes retomar desde ahí."}
         if proc.returncode not in (0, None):
             try:
                 await asyncio.wait_for(stderr_task, timeout=2)

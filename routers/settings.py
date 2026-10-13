@@ -31,7 +31,7 @@ async def test_key(request: Request):
     if provider not in PROVIDERS:
         return {"ok": False, "error": "Proveedor desconocido."}
     if not api_key or len(api_key) > 300:
-        return {"ok": False, "error": "Pegá una API key."}
+        return {"ok": False, "error": "Pega una API key."}
 
     client = AsyncOpenAI(api_key=api_key, base_url=PROVIDERS[provider]["base_url"],
                          timeout=15, max_retries=0)
@@ -43,7 +43,7 @@ async def test_key(request: Request):
         if llm.is_auth_error(e):
             nombre = provider.capitalize()
             return {"ok": False, "error": f"La key no es válida para {nombre}. "
-                                          f"Revisá que la copiaste completa y que es de {nombre}."}
+                                          f"Revisa que la copiaste completa y que es de {nombre}."}
         return {"ok": False, "error": llm.friendly_error(e, provider=provider)}
     finally:
         await client.close()

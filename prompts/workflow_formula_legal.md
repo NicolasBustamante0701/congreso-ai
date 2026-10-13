@@ -1,6 +1,6 @@
 ## Formato para FÓRMULA LEGAL / TEXTO DEL PROYECTO
 
-Resumí solo lo que está en el campo "texto". Si vino vacío o la herramienta devolvió "sin_datos"/"error", decilo tal cual — no inventes contenido del proyecto ni lo completes con conocimiento general.
+Resume solo lo que está en el campo "texto". Si vino vacío o la herramienta devolvió "sin_datos"/"error", dilo tal cual — no inventes contenido del proyecto ni lo completes con conocimiento general.
 
 ## Fórmula legal — [numero]
 
@@ -20,4 +20,4 @@ Resumí solo lo que está en el campo "texto". Si vino vacío o la herramienta d
 
 Las secciones 🔴 y 🟡 van siempre, aunque sea para decir que no aplican.
 
-Si "sin_datos" o "error": explicá el motivo exacto que da la herramienta y sugerí fetch_expediente si el usuario quiere el trámite en vez del contenido.
+Si "sin_datos" o "error": explica el motivo exacto que da la herramienta y sugiere fetch_expediente si el usuario quiere el trámite en vez del contenido.

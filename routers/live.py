@@ -84,7 +84,7 @@ async def live_transcribe(request: Request,
 
     async def generate():
         if not GROQ_API_KEY:
-            yield sse.error("Falta la key de Groq para transcribir. Pegala en Ajustes de IA.")
+            yield sse.error("Falta la key de Groq para transcribir. Pégala en Ajustes de IA.")
             return
         if not video_id:
             yield sse.error("Falta el parámetro video_id")

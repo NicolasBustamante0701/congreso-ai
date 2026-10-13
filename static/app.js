@@ -289,8 +289,8 @@
     const grupos = [...new Set(FRECUENTES.map((f) => f.grupo))];
     chatArea.innerHTML = `
       <div class="chat-vacio">
-        <h2>¿Qué querés investigar?</h2>
-        <p>Diana consulta en el momento las fuentes oficiales del Congreso, el Senado y la Cámara de Diputados, y te dice de dónde sale cada dato. También podés adjuntar un PDF o abrir un expediente.</p>
+        <h2>¿Qué quieres investigar?</h2>
+        <p>Diana consulta en el momento las fuentes oficiales del Congreso, el Senado y la Cámara de Diputados, y te dice de dónde sale cada dato. También puedes adjuntar un PDF o abrir un expediente.</p>
         ${grupos.map((g) => `
           <div class="grupo"><div class="grupo-t">${esc(g)}</div>
             <div class="sugerencias">${FRECUENTES.map((f, i) => f.grupo !== g ? '' : `
@@ -325,7 +325,7 @@
   function appendUser(text) {
     const d = document.createElement('div');
     d.className = 'msg user';
-    d.innerHTML = `<div class="msg-av">${SVG_USER}</div><div class="msg-body"><div class="msg-quien">Vos</div><div class="msg-texto">${esc(text)}</div></div>`;
+    d.innerHTML = `<div class="msg-av">${SVG_USER}</div><div class="msg-body"><div class="msg-quien">Tú</div><div class="msg-texto">${esc(text)}</div></div>`;
     chatArea.appendChild(d);
     scrollBottom();
   }
@@ -402,7 +402,7 @@
           if (obj.text) { full += obj.text; pintar(msgEl, full); scrollBottom(); }
         },
       });
-      if (!full) { full = '_Sin respuesta del asistente. Probá de nuevo._'; pintar(msgEl, full); }
+      if (!full) { full = '_Sin respuesta del asistente. Prueba de nuevo._'; pintar(msgEl, full); }
     } catch (err) {
       full = err.name === 'AbortError'
         ? (full ? full + '\n\n_(respuesta detenida)_' : '_Respuesta detenida._')
@@ -572,8 +572,8 @@
         ? '\n\n_Ojo: algunas páginas no tienen texto extraíble (probablemente escaneadas) y su contenido no está disponible._' : '';
       const recorte = /Texto recortado/.test(data.text)
         ? (data.doc_id ? '\n\n_Es largo: para cada pregunta busco en las páginas que correspondan, no solo en el comienzo._'
-                       : '\n\n_El documento es largo: se leyó solo una parte (te digo hasta qué página si preguntás)._') : '';
-      const msg = `Listo, leí **${esc(titulo.slice(0, 80))}** (${data.pages} págs.). Preguntame lo que necesites: cito la página de donde sale cada dato.${aviso}${recorte}`;
+                       : '\n\n_El documento es largo: se leyó solo una parte (te digo hasta qué página si preguntas)._') : '';
+      const msg = `Listo, leí **${esc(titulo.slice(0, 80))}** (${data.pages} págs.). Pregúntame lo que necesites: cito la página de donde sale cada dato.${aviso}${recorte}`;
       conv.messages.push({ role: 'assistant', content: msg });
       saveConvs(); renderConvs();
       pintar(msgEl, msg);
@@ -650,14 +650,14 @@
         ? sesiones.slice(0, 5).map((s) => `<button class="lista-item" data-goto="sesiones"><span class="lista-cuando">hasta<small>${esc(s.hasta)}</small></span>
             <span class="lista-texto"><span class="t">${esc(s.titulo || s.video_id)}</span>
             <span class="m">${s.tiene_informe ? 'con informe' : 'sin informe'}${s.en_vivo ? ' · capturada en vivo' : ''}</span></span><span></span></button>`).join('')
-        : vacio('Ninguna sesión transcrita', 'Abrí Sesiones para transcribir una del canal del Congreso.');
+        : vacio('Ninguna sesión transcrita', 'Abre Sesiones para transcribir una del canal del Congreso.');
     }).catch(() => { $('inicio-transcripciones').innerHTML = vacio('No se pudieron leer las transcripciones guardadas'); });
 
     // Cambios en los proyectos seguidos
     getJSON('/alertas?sin_leer=true').then(({ sin_leer }) => {
       const box = $('inicio-alertas');
       box.hidden = !sin_leer;
-      box.innerHTML = sin_leer ? `<div class="d-alert d-alert--info">Hay ${sin_leer} cambio${sin_leer === 1 ? '' : 's'} en proyectos que seguís.
+      box.innerHTML = sin_leer ? `<div class="d-alert d-alert--info">Hay ${sin_leer} cambio${sin_leer === 1 ? '' : 's'} en proyectos que sigues.
         <button class="d-btn d-btn--sm" data-goto="seguimiento" style="margin-left:auto">Ver cambios</button></div>` : '';
     }).catch(() => {});
 
@@ -737,7 +737,7 @@
     } catch (e) {
       agendaDatos = null;
       $('agenda-fuente').textContent = '';
-      lista.innerHTML = `<div class="d-alert d-alert--danger">No se pudo consultar la agenda oficial: ${esc(e.message)}. Probá con "Actualizar" en un rato.</div>`;
+      lista.innerHTML = `<div class="d-alert d-alert--danger">No se pudo consultar la agenda oficial: ${esc(e.message)}. Prueba con "Actualizar" en un rato.</div>`;
     }
   }
 
@@ -750,7 +750,7 @@
     $('agenda-fuente').textContent = `Fuente: ${agendaDatos.fuente} · consultado ${agendaDatos.actualizado} · ${sesiones.length} de ${agendaDatos.sesiones.length} actividades. Solo se muestran las que tienen fecha y hora publicadas.`;
     if (!sesiones.length) {
       lista.innerHTML = `<div class="d-card">${vacio(agendaDatos.sesiones.length ? 'Nada coincide con el filtro' : 'Sin actividades publicadas',
-        agendaDatos.sesiones.length ? 'Probá con otra cámara o quitá el texto del filtro.' : 'La agenda oficial no tiene eventos en los próximos 14 días.')}</div>`;
+        agendaDatos.sesiones.length ? 'Prueba con otra cámara o quita el texto del filtro.' : 'La agenda oficial no tiene eventos en los próximos 14 días.')}</div>`;
       return;
     }
     const porDia = new Map();
@@ -774,7 +774,7 @@
               <div class="agenda-tema">${esc(s.tema)}</div>
               <div class="agenda-meta">${s.camara ? `<span class="d-badge">${esc(s.camara)}</span>` : ''}
                 ${s.lugar ? `<span>${esc(s.lugar)}</span>` : ''}${s.organiza ? `<span>${esc(s.organiza)}</span>` : ''}</div>
-              <div class="agenda-acciones"><button class="d-btn d-btn--sm" data-preguntar="${esc(`¿Qué se va a tratar en "${s.tema}" el ${s.fecha} a las ${s.hora}? Buscá la agenda y los proyectos relacionados.`)}">Preguntar a Diana</button></div>
+              <div class="agenda-acciones"><button class="d-btn d-btn--sm" data-preguntar="${esc(`¿Qué se va a tratar en "${s.tema}" el ${s.fecha} a las ${s.hora}? Busca la agenda y los proyectos relacionados.`)}">Preguntar a Diana</button></div>
             </div>
           </div>`; }).join('')}</div></div>`;
     }).join('');
@@ -805,8 +805,8 @@
     if (local?.provider) aiProvider.value = local.provider;
     else if (server?.provider) aiProvider.value = server.provider;
     aiClear.hidden = !local?.hasKey;
-    aiKey.placeholder = local?.hasKey ? `Guardada (termina en …${local.keyHint}). Pegá otra para cambiarla` : 'Pegá tu API key';
-    aiGroqKey.placeholder = local?.hasGroqKey ? 'Guardada. Pegá otra para cambiarla' : 'Solo para la transcripción de sesiones';
+    aiKey.placeholder = local?.hasKey ? `Guardada (termina en …${local.keyHint}). Pega otra para cambiarla` : 'Pega tu API key';
+    aiGroqKey.placeholder = local?.hasGroqKey ? 'Guardada. Pega otra para cambiarla' : 'Solo para la transcripción de sesiones';
     if (!server) {
       aiStatus.innerHTML = '<div class="d-alert d-alert--danger">No se pudo consultar el servidor local.</div>';
     } else if (!server.ready) {
@@ -826,8 +826,8 @@
     const key = aiKey.value.trim();
     const groqKey = aiGroqKey.value.trim();
     const local = await api.aiSettingsGet();
-    if (!key && local.hasKey && local.provider !== provider) { aiSetMsg(`Pegá una API key de ${NOMBRE_PROV[provider]}.`, 'bad'); return; }
-    if (!key && !groqKey) { aiSetMsg('Pegá una API key.', 'bad'); return; }
+    if (!key && local.hasKey && local.provider !== provider) { aiSetMsg(`Pega una API key de ${NOMBRE_PROV[provider]}.`, 'bad'); return; }
+    if (!key && !groqKey) { aiSetMsg('Pega una API key.', 'bad'); return; }
     aiSave.disabled = true;
     try {
       if (key) {
@@ -864,7 +864,7 @@
       await api.aiSettingsClear();
       aiClear.disabled = false;
       const s = await aiRefresh();
-      aiSetMsg(s?.ready ? 'Listo.' : 'Keys borradas. Pegá una para volver a usar el chat.', s?.ready ? 'ok' : 'bad');
+      aiSetMsg(s?.ready ? 'Listo.' : 'Keys borradas. Pega una para volver a usar el chat.', s?.ready ? 'ok' : 'bad');
     });
   } else {
     // Fuera de Electron (navegador, pruebas) las keys no se pueden guardar.
@@ -946,7 +946,7 @@
             <span class="m">${esc([p.camara, p.estado, p.fecha_presentacion].filter(Boolean).join(' · '))}</span></span>
           <span class="lista-accion"><button class="d-btn d-btn--sm" data-expediente="${esc(p.numero)}">Abrir</button>
             <button class="d-btn d-btn--sm" data-seguir="${esc(p.numero)}" ${seguidos.has(p.numero) ? 'disabled' : ''}>${seguidos.has(p.numero) ? '✓ Siguiendo' : 'Seguir'}</button></span>
-        </div>`).join(''), 'Ningún título de proyecto contiene todas esas palabras. Probá con menos palabras o un sinónimo.') +
+        </div>`).join(''), 'Ningún título de proyecto contiene todas esas palabras. Prueba con menos palabras o un sinónimo.') +
       bloque('Dicho en sesiones transcritas', ft, (items) => items.map((t) => `
         <button class="lista-item" data-abrir-sesion="${esc(t.video_id)}" data-s="${t.start_s}" data-titulo="${esc(t.titulo)}" data-vivo="${t.en_vivo ? 1 : 0}">
           <span class="lista-cuando">${esc(t.ts)}</span>
@@ -957,7 +957,7 @@
   $('buscar-preguntar').addEventListener('click', () => {
     if (!ultimaBusqueda || streaming) return;
     newChat();
-    send(`Investigá en las fuentes oficiales del Congreso: ${ultimaBusqueda}`);
+    send(`Investiga en las fuentes oficiales del Congreso: ${ultimaBusqueda}`);
   });
 
   // Abrir una sesión transcrita en el segundo exacto (vista Sesiones).
@@ -995,7 +995,7 @@
     const lista = $('seg-lista'), alertasEl = $('alertas-lista');
     try {
       const [{ proyectos, revision_horas }, { alertas }] = await Promise.all([getJSON('/seguimiento'), getJSON('/alertas')]);
-      $('seg-explica').textContent = `Diana revisa estos expedientes en SPLEY cada ${revision_horas} h mientras la app está abierta, y cuando apretás "Revisar ahora". Solo avisa cambios documentados: estado, pasos nuevos del seguimiento o documentos nuevos. Con la app cerrada no se revisa nada.`;
+      $('seg-explica').textContent = `Diana revisa estos expedientes en SPLEY cada ${revision_horas} h mientras la app está abierta, y cuando aprietas "Revisar ahora". Solo avisa cambios documentados: estado, pasos nuevos del seguimiento o documentos nuevos. Con la app cerrada no se revisa nada.`;
       lista.innerHTML = proyectos.length ? proyectos.map((p) => `
         <div class="seg-item">
           <div class="seg-item-top"><span class="lista-num">${esc(p.numero)}</span>${p.estado ? `<span class="d-badge">${esc(p.estado)}</span>` : ''}
@@ -1006,7 +1006,7 @@
             <button class="d-btn d-btn--sm" data-revisar="${esc(p.numero)}">Revisar</button>
             <button class="d-btn d-btn--sm d-btn--ghost d-btn--danger" data-dejar="${esc(p.numero)}">Dejar de seguir</button></div>
         </div>`).join('')
-        : vacio('No seguís ningún proyecto', 'Agregá uno por su número, o tocá "Seguir" en un expediente o en la búsqueda.');
+        : vacio('No sigues ningún proyecto', 'Agrega uno por su número, o toca "Seguir" en un expediente o en la búsqueda.');
       alertasEl.innerHTML = alertas.length ? alertas.map((a) => {
         const [t, tono] = TIPO_ALERTA[a.tipo] || [a.tipo, 'info'];
         return `<div class="alerta${a.leida ? '' : ' is-nueva'}">
@@ -1016,7 +1016,7 @@
             <button class="link-btn" data-expediente="${esc(a.numero)}">Abrir expediente</button>
             ${a.enlace ? `<a href="${esc(a.enlace)}">Ver en SPLEY</a>` : ''}</div></div>`;
       }).join('')
-        : vacio('Sin cambios detectados', proyectos.length ? 'Todavía no cambió nada en lo que seguís desde que lo agregaste.' : '');
+        : vacio('Sin cambios detectados', proyectos.length ? 'Todavía no cambió nada en lo que sigues desde que lo agregaste.' : '');
     } catch (e) {
       lista.innerHTML = alertasEl.innerHTML = `<div class="d-card-body"><div class="d-alert d-alert--danger">No se pudo leer el seguimiento: ${esc(e.message)}</div></div>`;
     }
@@ -1046,7 +1046,7 @@
     try {
       const d = await seguirProyecto(n);
       inp.value = '';
-      msg.textContent = `Listo: seguís ${d.proyecto.numero} (${d.proyecto.estado || 'sin estado'}).`; msg.className = 'ai-msg ok';
+      msg.textContent = `Listo: sigues ${d.proyecto.numero} (${d.proyecto.estado || 'sin estado'}).`; msg.className = 'ai-msg ok';
       cargarSeguimiento();
     } catch (err) { msg.textContent = err.message; msg.className = 'ai-msg bad'; }
   });

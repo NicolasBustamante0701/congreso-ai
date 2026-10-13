@@ -2,6 +2,7 @@
 Los prompts que de verdad recibe el modelo: identidad, política de fuentes y
 tablas. Un cambio de redacción que borre una de estas reglas rompe acá.
 """
+import re
 from pathlib import Path
 
 import pytest
@@ -63,3 +64,26 @@ def test_prompts_de_sesion_saben_que_el_congreso_es_bicameral():
     for nombre in ("resumen_sesion.md", "session_qa.md"):
         texto = (Path(PROMPTS_DIR) / nombre).read_text(encoding="utf-8")
         assert "bicameral" in texto and "Senado" in texto, nombre
+
+
+VOSEO = re.compile(r"\b(vos|querés|podés|tenés|sabés|decime|fijate|mirá|preguntá|pegá|abrí|elegí|respondé|usá|"
+                   r"decí|seguís|probá|buscá|citá|aclará|agregá|explicá|escribí|volvé|cerrá|intentá)\b", re.I)
+
+
+@pytest.mark.parametrize("ruta", TODOS, ids=lambda p: p.name)
+def test_prompts_sin_voseo(ruta):
+    # El modelo imita el registro de sus instrucciones: escritas con voseo,
+    # Diana contestaba "querés", "podés". Solo puede aparecer como ejemplo
+    # de lo prohibido, entre comillas.
+    texto = ruta.read_text(encoding="utf-8")
+    sin_ejemplos = re.sub(r'"[^"]*"', "", texto)
+    assert not VOSEO.search(sin_ejemplos), VOSEO.search(sin_ejemplos).group(0)
+
+
+def test_interfaz_sin_voseo():
+    for f in Path(PROMPTS_DIR).parent.joinpath("static").glob("*.[hj]*"):
+        if f.name.endswith(".min.js"):
+            continue
+        texto = f.read_text(encoding="utf-8")
+        m = VOSEO.search(texto)
+        assert not m, f"{f.name}: {m.group(0) if m else ''}"

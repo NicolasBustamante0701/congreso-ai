@@ -314,7 +314,7 @@ function errorPage() {
     : '';
 
   const cuerpo = app.isPackaged
-    ? `<p>La app no pudo arrancar su servidor interno. Probá cerrarla y abrirla
+    ? `<p>La app no pudo arrancar su servidor interno. Prueba cerrarla y abrirla
          de nuevo; si sigue igual, puede que otro programa esté ocupando el
          puerto ${PORT}.</p>
        <p class="lbl">Si el problema persiste</p>
@@ -323,7 +323,7 @@ function errorPage() {
          pegando el detalle de abajo.</p>`
     : `<p>Falta el entorno de Python o alguna dependencia:</p>
        <pre>python3 -m venv .venv &amp;&amp; .venv/bin/pip install -r requirements.txt</pre>
-       <p>O corré <code>./start.sh</code>, que lo hace solo.</p>`;
+       <p>O corre <code>./start.sh</code>, que lo hace solo.</p>`;
 
   return `<html><head><meta charset="utf-8"><style>
       body{margin:0;padding:44px;font-family:system-ui;color:#111;background:#fff;
@@ -501,7 +501,7 @@ ipcMain.handle('ai-settings-save', async (event, { provider, apiKey, groqKey } =
   }
   logMain(`ajustes de IA guardados: proveedor=${provider}`);
   const ok = await restartServer();
-  return ok ? { ok: true } : { ok: false, error: 'El servidor no volvió a arrancar. Cerrá y abrí la app.' };
+  return ok ? { ok: true } : { ok: false, error: 'El servidor no volvió a arrancar. Cierra y abre la app.' };
 });
 
 ipcMain.handle('ai-settings-clear', async () => {

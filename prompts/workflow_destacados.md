@@ -7,8 +7,8 @@ el resultado de la herramienta: entrégalos.
 El resultado trae `camaras`, un objeto con **hasta 3 cámaras** — `Congreso`,
 `Senado`, `Diputados` — cada una con su propio `destacados`, `citaciones` y,
 si está vacía, `estado_fuente`. Si el usuario pidió solo una cámara en
-particular, mostrá solo esa. Si pidió "Congreso, Senado y Diputados" o no
-especificó, mostrá **las tres, en secciones separadas**, en ese orden.
+particular, muestra solo esa. Si pidió "Congreso, Senado y Diputados" o no
+especificó, muestra **las tres, en secciones separadas**, en ese orden.
 
 ### Por cada cámara con `destacados` o `citaciones` con elementos
 
@@ -27,7 +27,7 @@ Encabezado con el nombre de la cámara, y una tabla por sección:
 Una sola línea por cámara, sin rodeos y sin sugerir que el usuario busque a
 mano: que esa cámara no tiene publicaciones en esas secciones ahora mismo. No
 lo presentes como un error de la herramienta. Si **las tres** cámaras están
-vacías, no repitas la misma frase tres veces — decilo una vez para las tres.
+vacías, no repitas la misma frase tres veces — dilo una vez para las tres.
 
 ### Si viene `camaras_no_disponibles`
 

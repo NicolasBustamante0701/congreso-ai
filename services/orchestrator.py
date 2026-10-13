@@ -200,7 +200,7 @@ RECIENTE_RE = re.compile(r"\b(novedades|reciente|recientes|últim[oa]s?)\b", re.
 # herramienta (ver _detecta_proyectos_por_dias).
 #
 # Los afirmativos sueltos ("sí", "dale", "ok") quedan AFUERA a propósito: si el
-# turno anterior fue "¿querés que busque los proyectos?", ese "sí" sí necesita
+# turno anterior fue "¿quieres que busque los proyectos?", ese "sí" sí necesita
 # herramienta y el router es quien tiene el contexto para verlo.
 CONVERSACIONAL_RE = re.compile(
     r"^[\s¡¿]*(?:"
@@ -459,8 +459,8 @@ class ChatOrchestrator:
         texto = "\n\n".join(f"[Página {n}]\n{t}" for n, t in paginas)
         return {"role": "user", "content": (
             "[Páginas del documento cargado que corresponden a la próxima pregunta — texto "
-            "completo de esas páginas, con su número de página física. Respondé con esto y "
-            "citá las páginas.]\n" + texto)}
+            "completo de esas páginas, con su número de página física. Responde con esto y "
+            "cita las páginas.]\n" + texto)}
 
     def _con_paginas(self, msgs: list) -> list:
         """Inserta las páginas recuperadas justo antes de la última pregunta."""
@@ -527,7 +527,7 @@ class ChatOrchestrator:
         # Sin subtítulos: responder sin gastar una llamada al modelo.
         yield sse.text(
             "No pude obtener el transcript de ese video (sin subtítulos disponibles "
-            "o video privado). Para analizar la sesión podés: (1) cargar el PDF del "
+            "o video privado). Para analizar la sesión puedes: (1) cargar el PDF del "
             "acta con el botón de adjunto, o (2) pegar el texto del transcript "
             "directamente en el chat."
         )
@@ -638,7 +638,7 @@ class ChatOrchestrator:
             return
 
         # responder_directo no es una herramienta real: es la señal de
-        # "contestá con tu conocimiento, sin datos externos".
+        # "contesta con tu conocimiento, sin datos externos".
         real_calls = [tc for tc in choice.message.tool_calls
                       if tc.function.name != "responder_directo"]
         real_calls = self._deduplicar_tool_calls(real_calls)
@@ -890,7 +890,7 @@ class ChatOrchestrator:
             partes.append("enlaces " + ", ".join(links))
         return ("\n\n---\n**Ojo:** no pude verificar " + " y ".join(partes) +
                 " contra los datos consultados al Congreso. Pueden estar mal: "
-                "confirmalos en el portal SPLEY antes de usarlos.")
+                "confírmalos en el portal SPLEY antes de usarlos.")
 
     # ── Punto de entrada ─────────────────────────────────────────────────────
 

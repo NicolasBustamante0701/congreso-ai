@@ -18,7 +18,7 @@ async def chat(request: Request):
         async def err():
             yield sse.error(
                 f"No hay una API key de {LLM_PROVIDER.capitalize()} configurada. "
-                "Abrí Ajustes (abajo a la izquierda) → Inteligencia artificial y pegá una."
+                "Abre Ajustes (abajo a la izquierda) → Inteligencia artificial y pega una."
             )
         return StreamingResponse(err(), media_type="text/event-stream")
 

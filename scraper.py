@@ -764,8 +764,8 @@ def _format_proyectos(items, total_disponible: int | None = None):
         resumen["truncado"] = True
         resumen["aviso"] = (
             f"Se muestran {len(out)} de {total_disponible} resultados que "
-            f"cumplen el filtro. No afirmes que son todos: pedí más con `limit` "
-            f"si necesitás el total real o el desglose por cámara."
+            f"cumplen el filtro. No afirmes que son todos: pide más con `limit` "
+            f"si necesitas el total real o el desglose por cámara."
         )
     resumen["items"] = out
     return resumen
@@ -1074,7 +1074,7 @@ async def fetch_estado_proyecto(numero: str):
 
     return {"sin_datos": True,
             "mensaje": (f"El proyecto '{numero}' no está entre los 300 más recientes de SPLEY. "
-                        "Puede ser más antiguo o el número puede estar mal: probá con "
+                        "Puede ser más antiguo o el número puede estar mal: prueba con "
                         "fetch_expediente, que consulta el expediente directo.")}
 
 
@@ -1900,9 +1900,9 @@ async def fetch_agenda_pleno():
             "\"texto\" para eso: una palabra como \"dictamen\" puede aparecer muchas "
             "veces por cada asunto (título, referencias, pie de página), así que "
             "contarla da un número inflado y falso. Si el usuario pide un número "
-            "exacto de ítems por sección y no está en \"estructura\", decí que el "
+            "exacto de ítems por sección y no está en \"estructura\", di que el "
             "índice solo da el rango de páginas, no el conteo exacto de ítems, y "
-            "sugerí revisar el PDF directamente."
+            "sugiere revisar el PDF directamente."
         )
     else:
         # Fallback: no se pudo leer el índice — avisamos explícitamente en vez

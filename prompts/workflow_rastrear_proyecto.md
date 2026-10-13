@@ -11,6 +11,6 @@ Responde corto, sin tabla:
 - Presentado: [campo: fecha_ingreso]
 - [[Ver en SPLEY](campo: enlace — copiar exacto)]
 
-Cerrá siempre con esta sugerencia, en una sola línea:
+Cierra siempre con esta sugerencia, en una sola línea:
 
 ¿Quieres que te traiga el expediente completo — seguimiento por comisión, predictamen y los documentos/adjuntos del proyecto?

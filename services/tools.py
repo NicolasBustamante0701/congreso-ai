@@ -64,7 +64,7 @@ TOOLS = [
                         "description": "Filtrar proyectos presentados en los últimos N días calendario (ej: 15 para los últimos 15 días)"
                     },
                     # Sin esto el modelo no tenía forma de pedir más resultados:
-                    # el prompt le ordenaba "volvé a llamar con limit >=
+                    # el prompt le ordenaba "vuelve a llamar con limit >=
                     # total_disponible" cuando la respuesta venía truncada, pero
                     # `limit` no existía en el esquema. No podía obedecer, así
                     # que terminaba pidiéndole permiso al usuario para reintentar
@@ -73,7 +73,7 @@ TOOLS = [
                         "type": "integer",
                         "description": (
                             "Cuántos proyectos devolver. Default 20, o 100 si se usa `dias`. "
-                            "Si una respuesta previa vino con truncado=true, volvé a llamar "
+                            "Si una respuesta previa vino con truncado=true, vuelve a llamar "
                             "con limit >= total_disponible para tener el listado entero."
                         )
                     },

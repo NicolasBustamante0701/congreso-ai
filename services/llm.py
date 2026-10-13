@@ -182,8 +182,8 @@ def friendly_error(e, provider: str = LLM_PROVIDER) -> str:
         var = _ENV_KEY.get(provider, "la API key")
         return (
             f"La API key de {_label(provider)} no es válida o falta. "
-            f"Abrí Ajustes (abajo a la izquierda) → Inteligencia artificial y pegá una válida. "
-            f"Si corrés desde el código, también podés ponerla en {var} del archivo .env."
+            f"Abre Ajustes (abajo a la izquierda) → Inteligencia artificial y pega una válida. "
+            f"Si corres desde el código, también puedes ponerla en {var} del archivo .env."
         )
     if _es_cuota_diaria(e):
         m = re.search(r"try again in ([0-9hms.]+)", s)
@@ -195,8 +195,8 @@ def friendly_error(e, provider: str = LLM_PROVIDER) -> str:
     if is_rate_limit(e):
         return "Muchas consultas muy rápido. Espera unos segundos y vuelve a intentarlo."
     if "timeout" in type(e).__name__.lower() or "timed out" in s:
-        return f"{_label(provider)} tardó demasiado en responder. Intentá de nuevo en un momento."
-    return "Hubo un problema al conectar. Intentá de nuevo."
+        return f"{_label(provider)} tardó demasiado en responder. Intenta de nuevo en un momento."
+    return "Hubo un problema al conectar. Intenta de nuevo."
 
 
 # ── Llamadas ─────────────────────────────────────────────────────────────────
@@ -288,14 +288,14 @@ async def stream(messages, *, role="main", max_tokens=2048, temperature=0.4):
                         yield ("text", delta)
                 if meta.get("cortada"):
                     yield ("text", "\n\n---\n**Ojo:** la respuesta se cortó por largo y puede estar "
-                                   "incompleta. Pedí la parte que falta (por ejemplo, \"seguí con la agenda\").")
+                                   "incompleta. Pide la parte que falta (por ejemplo, \"sigue con la agenda\").")
                 return
             except Exception as e:
                 if provider == chain[0]:
                     primary_exc = e
                 if emitted:
                     logger.error("Stream de %s cortado a mitad de la respuesta: %s", provider, e)
-                    yield ("error", "La respuesta se cortó a mitad de camino. Intentá de nuevo.")
+                    yield ("error", "La respuesta se cortó a mitad de camino. Intenta de nuevo.")
                     return
                 if is_rate_limit(e) and not _es_cuota_diaria(e) and attempt < MAX_ATTEMPTS - 1:
                     wait = parse_retry_seconds(e)

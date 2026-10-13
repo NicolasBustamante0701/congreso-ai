@@ -22,7 +22,7 @@ MAX_CHARS_INFORME_DIRECTO = 24000
 SEGUNDOS_POR_BLOQUE = 15 * 60
 
 NOTAS_PROMPT = (
-    "Sacá notas de este tramo de una sesión parlamentaria, solo con lo que dice el texto. "
+    "Saca notas de este tramo de una sesión parlamentaria, solo con lo que dice el texto. "
     "Una viñeta por hecho relevante, cada una con su marca de tiempo [HH:MM:SS] copiada del "
     "texto: temas, quién habla (solo si el texto lo nombra), propuestas, cifras, decisiones "
     "explícitas, compromisos. Sin introducción ni conclusiones. Máximo 15 viñetas."
@@ -31,7 +31,7 @@ NOTAS_PROMPT = (
 
 def _sin_key():
     async def err():
-        yield sse.error("No hay una API key de IA configurada. Abrí Ajustes de IA y pegá una.")
+        yield sse.error("No hay una API key de IA configurada. Abre Ajustes de IA y pega una.")
         yield sse.DONE
     return StreamingResponse(err(), media_type="text/event-stream")
 
@@ -118,7 +118,7 @@ async def preguntar(video_id: str, request: Request):
         if not fragmentos:
             # Sin evidencia no se le pregunta al modelo: contestaría de memoria.
             yield sse.text("No aparece en lo transcrito de esta sesión. "
-                           + ("Probá con otras palabras o con un intervalo de tiempo "
+                           + ("Prueba con otras palabras o con un intervalo de tiempo "
                               "(por ejemplo, \"entre 00:20:00 y 00:30:00\")."
                               if modo != "rango" else "En ese intervalo no hay texto transcrito.")
                            + "\n\n_" + _texto_cobertura(datos) + "_")

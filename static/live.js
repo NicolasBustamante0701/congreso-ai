@@ -333,7 +333,7 @@ function openTranscriptionStream(startSec) {
         if (!userStopped) openTranscriptionStream(lastElapsedSeconds);
       }, RECONNECT_DELAY_MS);
     } else {
-      setStatus("Conexión interrumpida — no se pudo reconectar. Volvé a apretar Transcribir.", "idle");
+      setStatus("Conexión interrumpida — no se pudo reconectar. Vuelve a apretar Transcribir.", "idle");
       stopBtn.style.display  = "none";
       startBtn.style.display = "";
     }

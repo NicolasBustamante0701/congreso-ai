@@ -288,7 +288,7 @@
       // usuario escribió.
       const mensajes = [
         { role: 'user',      content: contextoInicial() },
-        { role: 'assistant', content: `Listo, tengo a la vista el expediente de ${(expediente && expediente.numero) || numero}. ¿Qué querés saber?` },
+        { role: 'assistant', content: `Listo, tengo a la vista el expediente de ${(expediente && expediente.numero) || numero}. ¿Qué quieres saber?` },
         ...historial,
       ];
 
@@ -396,9 +396,9 @@
       historial.push({
         role: 'user',
         content: `He cargado el documento "${titulo}" (${data.pages} páginas).\n\n` +
-                 `Contenido:\n${data.text}\n\n¿Qué querés analizar?`,
+                 `Contenido:\n${data.text}\n\n¿Qué quieres analizar?`,
       });
-      bot.innerHTML = md(`**PDF cargado** — ${titulo} (${data.pages} págs.). Preguntame lo que quieras sobre su contenido.`);
+      bot.innerHTML = md(`**PDF cargado** — ${titulo} (${data.pages} págs.). Pregúntame lo que quieras sobre su contenido.`);
     } catch (err) {
       bot.innerHTML = md(`**No se pudo cargar el PDF:** ${err.message}`);
     } finally {
