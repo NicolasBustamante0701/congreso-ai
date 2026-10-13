@@ -85,6 +85,15 @@ def _reset_periodos_cache():
     scraper._periodos_cache = None
 
 
+@pytest.fixture(autouse=True)
+def _reset_tool_cache():
+    """Mismo motivo: la caché de herramientas no puede pasar de un test a otro."""
+    from services import tool_cache
+    tool_cache.clear()
+    yield
+    tool_cache.clear()
+
+
 def assert_snapshot(name: str, data, ignorar: tuple = ()):
     """
     Compara `data` con tests/snapshots/<name>.json.

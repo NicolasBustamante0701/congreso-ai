@@ -190,7 +190,8 @@ async def test_resumen_usa_herramientas_fijas_no_el_router():
         events = [ev async for ev in orch._phase2_tools_fijas(RESUMEN_TOOLS)]
 
     assert orch.tools_usados == [name for name, _ in RESUMEN_TOOLS]
-    assert len(events) == len(RESUMEN_TOOLS)  # un sse.status por herramienta
+    # Corren en paralelo: un solo sse.status que las nombra a todas.
+    assert len(events) == 1 and "en paralelo" in events[0]
 
     # Los resultados NO van en el formato nativo de function-calling (mensaje
     # "assistant" con tool_calls + un mensaje "tool" por cada uno): Gemini lo
@@ -351,7 +352,8 @@ async def test_run_tool_reintenta_una_vez_y_se_recupera():
          patch("services.orchestrator.asyncio.sleep", new=AsyncMock()):
         result = await ChatOrchestrator._run_tool("buscar_proyectos", {"dias": 15})
 
-    assert result == {"items": [1, 2, 3]}
+    assert result["items"] == [1, 2, 3]
+    assert "consultado" in result          # hora de la consulta real (tool_cache)
     assert fake_tool.await_count == 2
 
 
@@ -363,7 +365,9 @@ async def test_run_tool_solo_reintenta_una_vez():
          patch("services.orchestrator.asyncio.sleep", new=AsyncMock()):
         result = await ChatOrchestrator._run_tool("buscar_proyectos", {"dias": 15})
 
-    assert result["sin_datos"] is True
+    # Falla de la fuente ≠ "no hay datos": llega como error para que el
+    # modelo diga que no se pudo consultar.
+    assert result["error"] == "no_se_pudo_consultar"
     assert fake_tool.await_count == 2
 
 
@@ -443,7 +447,7 @@ async def test_herramienta_colgada_corta_por_timeout():
          patch("services.orchestrator.TOOL_TIMEOUT_SECONDS", 0.05), \
          patch("services.orchestrator.asyncio.sleep", new=AsyncMock()):
         result = await ChatOrchestrator._run_tool("buscar_agenda", {})
-    assert result["sin_datos"] is True
+    assert result["error"] == "no_se_pudo_consultar"
 
 
 def test_citas_no_verificadas_detecta_proyectos_y_links_inventados():
@@ -519,3 +523,79 @@ async def test_con_nombres_de_congresistas_igual_transmite_en_vivo():
     junto = "".join(textos)
     assert "| 1 | Juan Pérez García |" in junto   # el nombre quedó corregido
     assert "Pérez García, Juan" not in junto
+
+
+# ── Fase 2: paralelo, recorte por filas, caché ──────────────────────────────
+
+async def test_herramientas_corren_en_paralelo_y_conservan_el_orden():
+    import asyncio
+    import time as _time
+
+    dormir = asyncio.sleep
+
+    async def lenta(args):
+        await dormir(0.2)
+        return {"de": args["n"]}
+
+    orch = make([user("x")])
+    with patch.dict("services.orchestrator.TOOL_MAP", {"buscar_agenda": lenta}):
+        t0 = _time.monotonic()
+        _ = [ev async for ev in orch._ejecutar_herramientas(
+            [("buscar_agenda", {"n": i}) for i in range(3)])]
+        dur = _time.monotonic() - t0
+    assert dur < 0.5                        # en serie serían ≥ 0.6s
+    assert ['"de": 0', '"de": 1', '"de": 2'] == [
+        next(f'"de": {i}' for i in range(3) if f'"de": {i}' in m["content"])
+        for m in orch.tool_msgs]
+
+
+async def test_timeout_agotado_no_se_reintenta():
+    import asyncio
+    dormir = asyncio.sleep
+    llamadas = []
+
+    async def colgada(args):
+        llamadas.append(1)
+        await dormir(10)
+
+    with patch.dict("services.orchestrator.TOOL_MAP", {"buscar_agenda": colgada}), \
+         patch("services.orchestrator.TOOL_TIMEOUT_SECONDS", 0.05):
+        r = await ChatOrchestrator._run_tool("buscar_agenda", {})
+    assert r["error"] == "no_se_pudo_consultar" and len(llamadas) == 1
+
+
+def test_recorte_quita_filas_enteras_y_avisa():
+    from services.orchestrator import MAX_TOOL_RESULT_CHARS, _recortar_resultado
+    filas = [{"numero": i, "titulo": "x" * 200} for i in range(200)]
+    out = _recortar_resultado("buscar_agenda", {"fuente": "SPLEY", "items": filas})
+    assert len(out) <= MAX_TOOL_RESULT_CHARS
+    data = json.loads(out)                  # sigue siendo JSON válido
+    assert data["truncado"]["total"] == 200
+    assert data["truncado"]["mostrados"] == len(data["items"]) < 200
+
+
+async def test_segunda_consulta_igual_sale_de_cache():
+    llamadas = []
+
+    async def tool(args):
+        llamadas.append(1)
+        return {"items": [1]}
+
+    with patch.dict("services.orchestrator.TOOL_MAP", {"fetch_expediente": tool}):
+        a = await ChatOrchestrator._run_tool("fetch_expediente", {"numero": "1"})
+        b = await ChatOrchestrator._run_tool("fetch_expediente", {"numero": "1"})
+    assert len(llamadas) == 1
+    assert b["desde_cache"] is True and b["consultado"] == a["consultado"]
+
+
+async def test_sin_datos_no_se_cachea():
+    llamadas = []
+
+    async def tool(args):
+        llamadas.append(1)
+        return {"sin_datos": True, "mensaje": "vacío"}
+
+    with patch.dict("services.orchestrator.TOOL_MAP", {"buscar_agenda": tool}):
+        await ChatOrchestrator._run_tool("buscar_agenda", {})
+        await ChatOrchestrator._run_tool("buscar_agenda", {})
+    assert len(llamadas) == 2

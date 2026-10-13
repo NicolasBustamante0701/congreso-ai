@@ -20,7 +20,7 @@ from types import SimpleNamespace
 
 from config import ahora_lima, logger
 from scraper import fetch_transcript_youtube
-from services import llm, sse
+from services import llm, sse, tool_cache
 from services.observability import timed
 from services.prompt_registry import (
     ROUTER_PROMPT,
@@ -41,6 +41,10 @@ MAX_TOOL_RESULT_CHARS = 7000
 # pestañas): sin tope total, una herramienta podía colgar el chat minutos.
 TOOL_TIMEOUT_SECONDS = 60
 
+# Herramientas que corren a la vez en Fase 2. El resumen semanal pide 5: con
+# 4 en paralelo ninguna fuente del Congreso recibe una ráfaga de pedidos.
+MAX_TOOLS_PARALELO = 4
+
 # Tope propio para las herramientas que devuelven listados largos.
 #
 # Con 7000 el JSON de un "últimos 15 días" (89 proyectos, ~400 caracteres cada
@@ -58,12 +62,44 @@ MAX_TOOL_RESULT_CHARS_POR_TOOL = {
 }
 
 
-def _recortar_resultado(nombre: str, texto: str) -> str:
-    """Aplica el tope de caracteres que le corresponda a esa herramienta."""
+def _recortar_resultado(nombre: str, resultado) -> str:
+    """
+    Serializa el resultado de una herramienta dentro del tope que le toca.
+
+    Antes se cortaba el JSON en el carácter N y se pegaba '... [recortado]"}':
+    el modelo recibía un JSON roto, con la última fila partida a la mitad, y
+    sin saber cuántas faltaban. Ahora se quitan FILAS enteras de la lista más
+    larga hasta que entra, y se avisa con "truncado": {mostrados, total}, que
+    el prompt le pide comunicar. Solo si no hay lista que recortar (un texto
+    gigante) se cae al corte por caracteres.
+    """
     tope = MAX_TOOL_RESULT_CHARS_POR_TOOL.get(nombre, MAX_TOOL_RESULT_CHARS)
+    texto = json.dumps(resultado, ensure_ascii=False)
     if len(texto) <= tope:
         return texto
-    return texto[:tope] + '... [recortado]"}'
+
+    if isinstance(resultado, dict):
+        listas = [(k, v) for k, v in resultado.items() if isinstance(v, list) and len(v) > 1]
+        if listas:
+            clave, filas = max(listas, key=lambda kv: len(json.dumps(kv[1], ensure_ascii=False)))
+            total = len(filas)
+            # Búsqueda binaria de cuántas filas entran.
+            lo, hi = 1, total - 1
+            mejor = None
+            while lo <= hi:
+                mid = (lo + hi) // 2
+                prueba = {**resultado, clave: filas[:mid],
+                          "truncado": {"campo": clave, "mostrados": mid, "total": total}}
+                t = json.dumps(prueba, ensure_ascii=False)
+                if len(t) <= tope:
+                    mejor, lo = t, mid + 1
+                else:
+                    hi = mid - 1
+            if mejor:
+                return mejor
+
+    return texto[:tope] + '\n[RESULTADO RECORTADO: el resto no entró y no está en estos datos]'
+
 
 # Ventana del resumen semanal, en días hacia atrás desde hoy — lo que cuenta
 # como "esta semana" para agenda de sesiones y el corte estricto del informe.
@@ -584,23 +620,11 @@ class ChatOrchestrator:
         # _stream_final) así que no hace falta ese formato — un mensaje de
         # texto plano con el resultado le sirve igual al modelo y funciona
         # con cualquier proveedor.
-        for tc in real_calls:
-            name = tc.function.name
-            self.tools_usados.append(name)
-            args = self._ajustar_args(name, self._clean_args(tc.function.arguments))
-
-            yield sse.status(STATUS_LABELS.get(name, "Consultando el Congreso..."))
-
-            result = await self._run_tool(name, args)
-
-            result_str = _recortar_resultado(name, json.dumps(result, ensure_ascii=False))
-
-            self.tool_msgs.append({
-                "role": "user",
-                "content": f"[Resultado de la herramienta {name}]\n"
-                           f"(Datos que consultó el sistema para responder la última pregunta; "
-                           f"el usuario no los envió ni los ve.)\n{result_str}",
-            })
+        llamadas = [(tc.function.name,
+                     self._ajustar_args(tc.function.name, self._clean_args(tc.function.arguments)))
+                    for tc in real_calls]
+        async for ev in self._ejecutar_herramientas(llamadas):
+            yield ev
 
     async def _phase2_tools_fijas(self, tools: tuple):
         """
@@ -611,23 +635,46 @@ class ChatOrchestrator:
         (o es riesgoso) dejárselo a la elección del router de 8B — ver
         RESUMEN_TOOLS y _detecta_proyectos_por_dias.
         """
-        # Mismo motivo que en _phase2: texto plano en vez del formato nativo
-        # de tool_calls, para no depender de metadata específica de un
-        # proveedor (ver comentario ahí).
-        for name, args in tools:
-            args = self._ajustar_args(name, dict(args)) if not self.is_resumen else args
+        llamadas = [(name, self._ajustar_args(name, dict(args)) if not self.is_resumen else args)
+                    for name, args in tools]
+        async for ev in self._ejecutar_herramientas(llamadas):
+            yield ev
+
+    async def _ejecutar_herramientas(self, llamadas: list):
+        """
+        Corre las herramientas EN PARALELO (hasta MAX_TOOLS_PARALELO a la vez)
+        y agrega sus resultados a tool_msgs en el orden pedido.
+
+        Antes iban una tras otra: el resumen semanal esperaba la suma de sus
+        5 consultas al Congreso, cuando son independientes entre sí.
+
+        Texto plano en vez del formato nativo de tool_calls (mensaje
+        "assistant" + mensajes "tool"): rompe con Gemini, que exige un
+        "thought_signature" atado a la respuesta original que no se puede
+        reconstruir a mano. Fase 3 no manda `tools=`, así que no hace falta.
+        """
+        if not llamadas:
+            return
+        for name, _ in llamadas:
             self.tools_usados.append(name)
-            yield sse.status(STATUS_LABELS.get(name, "Consultando el Congreso..."))
+        etiquetas = list(dict.fromkeys(STATUS_LABELS.get(n, "Consultando el Congreso...")
+                                       for n, _ in llamadas))
+        yield sse.status(etiquetas[0] if len(etiquetas) == 1
+                         else "Consultando en paralelo: " + " · ".join(e.rstrip(".") for e in etiquetas))
 
-            result = await self._run_tool(name, args)
+        sem = asyncio.Semaphore(MAX_TOOLS_PARALELO)
 
-            result_str = _recortar_resultado(name, json.dumps(result, ensure_ascii=False))
+        async def una(name, args):
+            async with sem:
+                return await self._run_tool(name, args)
 
+        resultados = await asyncio.gather(*(una(n, a) for n, a in llamadas))
+        for (name, _), result in zip(llamadas, resultados):
             self.tool_msgs.append({
                 "role": "user",
                 "content": f"[Resultado de la herramienta {name}]\n"
                            f"(Datos que consultó el sistema para responder la última pregunta; "
-                           f"el usuario no los envió ni los ve.)\n{result_str}",
+                           f"el usuario no los envió ni los ve.)\n{_recortar_resultado(name, result)}",
             })
 
     def _ajustar_args(self, name: str, args: dict) -> dict:
@@ -656,25 +703,48 @@ class ChatOrchestrator:
             logger.warning("El modelo pidió una herramienta inexistente: %s", name)
             return {"sin_datos": True, "mensaje": f"Herramienta '{name}' no disponible."}
 
+        en_cache = tool_cache.get(name, args)
+        if en_cache is not None:
+            logger.info("herramienta %s desde caché args=%s", name, args)
+            return en_cache
+
         last_exc = None
+        result = None
+        ok = False
         for intento in range(2):
+            inicio = time.monotonic()
             try:
                 with timed("herramienta", nombre=name, args=args, intento=intento + 1):
                     result = await asyncio.wait_for(TOOL_MAP[name](args), TOOL_TIMEOUT_SECONDS)
+                ok = True
                 break
             except Exception as e:
                 last_exc = e
-                if intento == 0:
+                # Si ya consumió el tope entero no se reintenta: duplicaba la
+                # espera (2 × 60s) por una fuente que claramente no responde.
+                agoto_el_tope = time.monotonic() - inicio >= TOOL_TIMEOUT_SECONDS * 0.95
+                if intento == 0 and not agoto_el_tope:
                     logger.warning("Herramienta %s falló (intento 1/2), reintentando: %s", name, e)
                     await asyncio.sleep(1.5)
-        else:
-            logger.error("Herramienta %s falló con args=%s tras reintentar: %s", name, args, last_exc)
-            return {"sin_datos": True,
-                    "mensaje": f"Error al consultar {name}: {str(last_exc)[:100]}"}
+                    continue
+                break
+
+        if not ok:
+            logger.error("Herramienta %s falló con args=%s: %s", name, args, last_exc)
+            # "error", no "sin_datos": la fuente no respondió, que no es lo
+            # mismo que "no hay resultados". Antes los dos casos llegaban
+            # igual y el modelo afirmaba "no hay proyectos" cuando en
+            # realidad SPLEY estaba caído.
+            tipo = "timeout" if isinstance(last_exc, TimeoutError) else type(last_exc).__name__
+            return {"error": "no_se_pudo_consultar",
+                    "mensaje": (f"La fuente oficial no respondió ({tipo}). No se sabe si hay "
+                                "datos: decile al usuario que no se pudo consultar y que reintente.")}
 
         if isinstance(result, dict) and "error" in result:
             return {"sin_datos": True,
                     "mensaje": result.get("error", "No hay información disponible.")}
+        if not (isinstance(result, dict) and result.get("sin_datos")):
+            result = tool_cache.put(name, args, result)
         return result
 
     # ── Fase 3: respuesta final ──────────────────────────────────────────────
