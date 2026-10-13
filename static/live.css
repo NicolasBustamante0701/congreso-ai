@@ -316,6 +316,12 @@ html, body { height: 100%; font-family: var(--font); background: var(--bg); colo
 .lv-ia-segment-body strong { font-weight: 800; }
 .lv-ia-segment-body p  { margin-bottom: 9px; }
 .lv-ia-segment-body h3 { font-size: 12px; font-weight: 800; margin: 12px 0 5px; }
+.lv-ia-segment-body ul, .lv-ia-segment-body ol { padding-left: 18px; margin-bottom: 9px; }
+.lv-ia-segment-body .table-scroll { overflow-x: auto; margin: 8px 0 10px; }
+.lv-ia-segment-body table { border-collapse: collapse; width: 100%; font-size: 11.5px; }
+.lv-ia-segment-body th { background: var(--text); color: var(--bg); padding: 5px 8px; text-align: left; font-weight: 700; }
+.lv-ia-segment-body td { border: 1px solid var(--border); padding: 4px 8px; vertical-align: top; }
+.lv-ia-segment-body tr:nth-child(even) td { background: var(--bg-off); }
 .lv-ia-segment-body ul { padding-left: 16px; margin-bottom: 9px; }
 .lv-ia-segment-body li { margin-bottom: 3px; }
 

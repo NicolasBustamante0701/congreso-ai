@@ -67,30 +67,53 @@ def _fill_inline(paragraph, text: str):
 
 
 def _is_table_row(s: str) -> bool:
-    return s.startswith('|') and s.endswith('|')
+    # El modelo a veces omite el "|" final ("| a | b"), que GFM acepta igual.
+    return s.strip().startswith('|') and s.count('|') >= 2
 
 
 def _is_separator_row(s: str) -> bool:
-    return _is_table_row(s) and bool(re.match(r'^\|[\s\-|:]+\|$', s))
+    return _is_table_row(s) and bool(re.match(r'^\|?[\s\-|:]+\|?$', s.strip())) and '-' in s
 
 
 def _parse_row(s: str) -> list:
-    return s.strip('|').split('|')
+    """
+    Celdas de una fila. Respeta "\\|" (pipe escapado dentro de una celda):
+    antes partía la celda en dos y corría todas las columnas siguientes.
+    """
+    s = s.strip()
+    if s.startswith('|'):
+        s = s[1:]
+    if s.endswith('|') and not s.endswith('\\|'):
+        s = s[:-1]
+    celdas = re.split(r'(?<!\\)\|', s)
+    return [c.replace('\\|', '|').strip() for c in celdas]
 
 
 def _add_table(doc, rows: list):
-    tbl = doc.add_table(rows=len(rows), cols=len(rows[0]))
+    # Todas las filas con el ancho del encabezado: una fila con más celdas
+    # reventaba con IndexError (y el export entero fallaba); una con menos
+    # dejaba celdas sin tocar. Las de más se juntan en la última columna para
+    # no perder texto.
+    ncols = len(rows[0])
+    norm = []
+    for row in rows:
+        if len(row) > ncols:
+            row = row[:ncols - 1] + [" | ".join(row[ncols - 1:])]
+        norm.append(row + [""] * (ncols - len(row)))
+
+    tbl = doc.add_table(rows=len(norm), cols=ncols)
     tbl.style = 'Table Grid'
-    for r_idx, row in enumerate(rows):
+    for r_idx, row in enumerate(norm):
         for c_idx, cell_text in enumerate(row):
             cell = tbl.cell(r_idx, c_idx)
-            cell.text = _strip_inline(cell_text.strip())
+            para = cell.paragraphs[0]
             if r_idx != 0:
+                # Celdas del cuerpo con links y negritas reales: la primera
+                # columna de las tablas de proyectos es el link al expediente.
+                _fill_inline(para, cell_text)
                 continue
             # Fila de encabezado: negrita, texto blanco, fondo oscuro.
-            para = cell.paragraphs[0]
-            para.clear()
-            run = para.add_run(_strip_inline(cell_text.strip()))
+            run = para.add_run(_strip_inline(cell_text))
             run.bold = True
             run.font.color.rgb = WHITE
             shd = OxmlElement('w:shd')
@@ -147,7 +170,7 @@ def markdown_to_docx(md: str) -> bytes:
             para = doc.add_paragraph(style='List Bullet')
             _fill_inline(para, re.sub(r'^[-*]\s+', '', line))
         elif re.match(r'^\d+\.\s+', line):
-            doc.add_paragraph(re.sub(r'^\d+\.\s+', '', line), style='List Number')
+            _fill_inline(doc.add_paragraph(style='List Number'), re.sub(r'^\d+\.\s+', '', line))
         elif line == '':
             doc.add_paragraph()
         else:

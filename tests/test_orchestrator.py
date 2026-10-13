@@ -497,3 +497,25 @@ def test_citas_acepta_numero_publicado_sin_guion_entre_anios():
     nums, _ = _citas_no_verificadas("Se sustenta el 00088-2026-2031-CD.",
                                     "Sustentación de la Proposición Legislativa N° 00088-20262031-CD")
     assert nums == []
+
+
+async def test_con_nombres_de_congresistas_igual_transmite_en_vivo():
+    # Regresión de la línea base: con autores en los datos, la respuesta
+    # entera se retenía hasta el final (primer texto ≈ total). Ahora sale
+    # línea por línea, ya corregida.
+    orch = ChatOrchestrator([user("proyectos de agua")])
+    orch.tool_msgs = [{"role": "user",
+                       "content": 'Datos: {"items": [{"autor": "Juan Pérez García"}]}'}]
+
+    async def fake_stream(msgs, max_tokens):
+        yield ("text", "| Proyecto | Autor |\n|---|---|\n")
+        yield ("text", "| 1 | Pérez García, Juan |\n")
+        yield ("text", "Fin.")
+
+    with patch("services.orchestrator.llm.stream", fake_stream):
+        evs = [ev async for ev in orch._stream_final([{"role": "system", "content": "x"}], 100)]
+    textos = [json.loads(e[6:])["text"] for e in evs if e.startswith('data: {"text"')]
+    assert len(textos) >= 3                       # no un solo bloque al final
+    junto = "".join(textos)
+    assert "| 1 | Juan Pérez García |" in junto   # el nombre quedó corregido
+    assert "Pérez García, Juan" not in junto

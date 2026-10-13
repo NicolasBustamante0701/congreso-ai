@@ -449,21 +449,11 @@ async function runAnalysis() {
   }
 }
 
+// static/md.js, con `tramos` para que "[00:10 – 01:10]" salga como
+// encabezado (también en el PDF/Word exportado). Antes era un parser mínimo
+// que no dibujaba tablas.
 function renderMd(text) {
-  return text.split("\n").map(line => {
-    if (/^###?\s/.test(line)) return `<h3>${renderInline(line.replace(/^###?\s/,""))}</h3>`;
-    // Encabezado de tramo del resumen live, ej. "[00:10 – 01:10]" — ver
-    // runAnalysis(), para que el PDF/Word exportado también lo distinga.
-    if (/^\[\d{1,2}:\d{2}\s*–\s*\d{1,2}:\d{2}\]$/.test(line.trim())) {
-      return `<h3 class="ts">${renderInline(line.trim())}</h3>`;
-    }
-    if (/^[-*]\s/.test(line)) return `<li>${renderInline(line.slice(2))}</li>`;
-    if (!line.trim()) return "";
-    return `<p>${renderInline(line)}</p>`;
-  }).join("");
-}
-function renderInline(s) {
-  return escHtml(s).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+  return DianaMD.render(text, { tramos: true });
 }
 
 /* ── Countdown ───────────────────────────────────────── */
@@ -517,6 +507,10 @@ function buildPrintHtml(title, bodyHtml) {
   p{margin-bottom:9px} ul,ol{padding-left:20px;margin-bottom:9px} li{margin-bottom:4px}
   .ts{font-weight:bold;color:#555;margin-right:8px;font-variant-numeric:tabular-nums}
   strong{font-weight:bold}
+  table{border-collapse:collapse;width:100%;margin:12px 0;font-size:10pt}
+  th{background:#111;color:#fff;padding:6px 10px;text-align:left;font-weight:bold}
+  td{border:1px solid #ccc;padding:6px 10px;vertical-align:top}
+  tr:nth-child(even) td{background:#f7f7f7}
   .ftr{margin-top:40px;border-top:1px solid #ccc;padding-top:12px;font-size:9pt;color:#666}
   @media print{body{padding:20px 30px}}
 </style></head><body>

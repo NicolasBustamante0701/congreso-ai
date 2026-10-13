@@ -741,44 +741,22 @@
     let toolCalled = false;  // true si el modelo consultó una herramienta
 
     try {
-      const resp = await fetch('/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: conv.messages }),
+      await DianaSSE.post('/chat', { messages: conv.messages }, {
         signal: abortCtl.signal,
+        onEvent(obj) {
+          if (obj.error) { renderContent(assistantEl, `**Error:** ${obj.error}`); return false; }
+          if (obj.status) {
+            toolCalled = true;
+            assistantEl.innerHTML = `<span class="fetch-status">${escHtml(obj.status)}</span>`;
+            scrollBottom();
+          }
+          if (obj.text) {
+            fullText += obj.text;
+            renderContent(assistantEl, fullText);
+            scrollBottom();
+          }
+        },
       });
-
-      const reader  = resp.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const lines = buf.split('\n');
-        buf = lines.pop();
-
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue;
-          const raw = line.slice(6).trim();
-          if (raw === '[DONE]') continue;
-          try {
-            const obj = JSON.parse(raw);
-            if (obj.error)  { renderContent(assistantEl, `**Error:** ${obj.error}`); break; }
-            if (obj.status) {
-              toolCalled = true;
-              assistantEl.innerHTML = `<span class="fetch-status">${escHtml(obj.status)}</span>`;
-              scrollBottom();
-            }
-            if (obj.text)   {
-              fullText += obj.text;
-              renderContent(assistantEl, fullText);
-              scrollBottom();
-            }
-          } catch { /* ignore */ }
-        }
-      }
     } catch (err) {
       if (err.name === 'AbortError') {
         // Cortada a propósito: lo que ya llegó se conserva, no es un error.
@@ -1251,41 +1229,12 @@ ${table.outerHTML}
 
 
 
-  // ── Markdown parser ───────────────────────────────
-  // marked + DOMPurify: más robusto que el parser manual y XSS-safe.
-  // El guard importa: si alguna de las dos librerías no cargó, una excepción
-  // acá aborta el resto del script y deja sin cablear los listeners de más
-  // abajo (navegación), con la app aparentemente viva pero sin botones.
-  const MD_OK = typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined';
-  if (MD_OK) {
-    marked.setOptions({ breaks: true, gfm: true });
-  } else {
-    console.error('marked/DOMPurify no cargaron — se muestra el texto sin formato.');
-  }
-
-  function escapeHtml(s) {
-    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
-                    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-  }
-
-  function parseMarkdown(md) {
-    // Degradar a texto plano escapado antes que romper el chat.
-    if (!MD_OK) return `<p>${escapeHtml(md).replace(/\n/g, '<br>')}</p>`;
-    const raw = marked.parse(md);
-    return DOMPurify.sanitize(raw, {
-      ADD_ATTR: ['target', 'rel'],
-      ALLOWED_TAGS: ['p','br','h1','h2','h3','h4','h5','h6',
-        'strong','em','code','pre','blockquote',
-        'table','thead','tbody','tr','th','td',
-        'ul','ol','li','a','hr','span'],
-    });
-  }
-
-  function escHtml(s) {
-    return String(s)
-      .replace(/&/g, '&amp;').replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-  }
+  // ── Markdown ──────────────────────────────────────
+  // Un único renderizador para toda la app (static/md.js): marked GFM +
+  // DOMPurify, con tablas. Si las librerías no cargaron, degrada a texto
+  // plano escapado en vez de abortar el script.
+  function parseMarkdown(md) { return DianaMD.render(md); }
+  function escHtml(s) { return DianaMD.esc(s); }
 
   // ── Navegación Chat / Live / PDFs ────────────────
   const navChat    = document.getElementById('nav-chat');

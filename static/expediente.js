@@ -10,7 +10,6 @@
   'use strict';
 
   const $ = (id) => document.getElementById(id);
-  const MD_OK = typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined';
 
   let expediente = null;   // la ficha ya cargada
   let historial  = [];     // turnos del chat de este proyecto
@@ -23,14 +22,7 @@
       .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
 
-  function md(texto) {
-    if (!MD_OK) return `<p>${esc(texto).replace(/\n/g, '<br>')}</p>`;
-    return DOMPurify.sanitize(marked.parse(texto), {
-      ALLOWED_TAGS: ['p','br','h1','h2','h3','h4','h5','h6','strong','em','code','pre',
-                     'blockquote','table','thead','tbody','tr','th','td','ul','ol','li','a','hr','span'],
-      ADD_ATTR: ['target','rel'],
-    });
-  }
+  function md(texto) { return DianaMD.render(texto); }   // static/md.js
 
   // Un valor vacío se pinta como "- -" igual que la ficha oficial: que un
   // campo no tenga dato también es información, y dejarlo en blanco parece
@@ -299,35 +291,13 @@
         ...historial,
       ];
 
-      const resp = await fetch('/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: mensajes }),
+      await DianaSSE.post('/chat', { messages: mensajes }, {
+        onEvent(obj) {
+          if (obj.error)  { bot.innerHTML = md(`**Error:** ${obj.error}`); return false; }
+          if (obj.status) { bot.innerHTML = `<span class="exp-status">${esc(obj.status)}</span>`; abajo(); }
+          if (obj.text)   { completo += obj.text; bot.innerHTML = md(completo); abajo(); }
+        },
       });
-
-      const reader  = resp.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const lineas = buf.split('\n');
-        buf = lineas.pop();
-
-        for (const linea of lineas) {
-          if (!linea.startsWith('data: ')) continue;
-          const crudo = linea.slice(6).trim();
-          if (crudo === '[DONE]') continue;
-          try {
-            const obj = JSON.parse(crudo);
-            if (obj.error)  { bot.innerHTML = md(`**Error:** ${obj.error}`); break; }
-            if (obj.status) { bot.innerHTML = `<span class="exp-status">${esc(obj.status)}</span>`; abajo(); }
-            if (obj.text)   { completo += obj.text; bot.innerHTML = md(completo); abajo(); }
-          } catch { /* fragmento incompleto */ }
-        }
-      }
 
       if (completo) historial.push({ role: 'assistant', content: completo });
       else if (!bot.textContent.trim()) bot.innerHTML = md('_Sin respuesta._');

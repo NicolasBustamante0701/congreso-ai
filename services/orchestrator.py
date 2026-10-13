@@ -729,31 +729,41 @@ class ChatOrchestrator:
         """
         Streaming de Fase 3 con reintento sobre rate limit.
 
-        Si este turno trajo nombres de congresistas de una herramienta, se
-        buferea el texto para poder corregir el reformateo del modelo antes
-        de mandarlo (ver _fix_nombres_reformateados) — el resto de los turnos
-        sigue transmitiendo en vivo, delta por delta, sin buffer.
+        Si este turno trajo nombres de congresistas de una herramienta, el
+        texto se corrige (ver _fix_nombres_reformateados) LÍNEA POR LÍNEA: se
+        emite cada línea apenas se completa. Antes se bufereaba la respuesta
+        entera y el usuario no veía nada hasta el final — la línea base medía
+        primer texto ≈ total (13.7s de 13.8s) en cada búsqueda de proyectos.
+        Un nombre nunca cruza un salto de línea (cada fila de tabla trae el
+        suyo), así que corregir por línea da el mismo resultado.
         """
         nombres = _extraer_nombres_normalizados(self.tool_msgs) if self.tool_msgs else set()
-        buffer = ""
+        pendiente = ""
         completo = ""
         async for kind, payload in llm.stream(msgs, max_tokens=max_tokens):
             if kind == "text":
                 completo += payload
-                if nombres:
-                    buffer += payload
-                else:
+                if not nombres:
                     yield sse.text(payload)
+                    continue
+                pendiente += payload
+                corte = pendiente.rfind("\n")
+                if corte < 0 and len(pendiente) > 1500:
+                    # Párrafo larguísimo sin saltos: cortar en el último punto
+                    # para no retener todo; un nombre no lleva ". " adentro.
+                    corte = pendiente.rfind(". ")
+                if corte >= 0:
+                    listo, pendiente = pendiente[:corte + 1], pendiente[corte + 1:]
+                    yield sse.text(_fix_nombres_reformateados(listo, nombres))
             elif kind == "status":
                 yield sse.status(payload)
             elif kind == "error":
+                if pendiente:
+                    yield sse.text(_fix_nombres_reformateados(pendiente, nombres))
                 yield sse.error(payload)
                 return
-        if buffer:
-            buffer = _fix_nombres_reformateados(buffer, nombres)
-            CHUNK = 60
-            for i in range(0, len(buffer), CHUNK):
-                yield sse.text(buffer[i:i + CHUNK])
+        if pendiente:
+            yield sse.text(_fix_nombres_reformateados(pendiente, nombres))
         aviso = self._verificar_citas(completo, msgs)
         if aviso:
             yield sse.text(aviso)

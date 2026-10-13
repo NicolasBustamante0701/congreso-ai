@@ -118,52 +118,31 @@
     let rawVideoTitle = '';
 
     try {
-      const resp = await fetch('/sesiones/resumir', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ video_id: selected.id, titulo: selected.titulo, en_vivo: selected.en_vivo || false }),
+      await DianaSSE.post('/sesiones/resumir',
+        { video_id: selected.id, titulo: selected.titulo, en_vivo: selected.en_vivo || false }, {
+        onEvent(obj) {
+          if (obj.error) {
+            result.innerHTML = `<p style="color:#c00;font-size:13px;padding:8px 0">${esc(obj.error)}</p>`;
+            return false;
+          }
+          if (obj.transcript_raw) {
+            rawTranscript = obj.transcript_raw;
+            rawVideoUrl   = obj.video_url   || '';
+            rawVideoTitle = obj.video_titulo || selected.titulo;
+          }
+          if (obj.status) {
+            result.innerHTML = `<div class="s-status">
+              <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+              <span>${esc(obj.status)}</span>
+            </div>`;
+          }
+          if (obj.text) {
+            fullText += obj.text;
+            result.innerHTML = `<div class="s-md">${parseMarkdown(fullText)}</div>`;
+            addTableCopyBtns();
+          }
+        },
       });
-
-      const reader  = resp.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const lines = buf.split('\n');
-        buf = lines.pop();
-
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue;
-          const raw = line.slice(6).trim();
-          if (raw === '[DONE]') continue;
-          try {
-            const obj = JSON.parse(raw);
-            if (obj.error) {
-              result.innerHTML = `<p style="color:#c00;font-size:13px;padding:8px 0">${esc(obj.error)}</p>`;
-              break;
-            }
-            if (obj.transcript_raw) {
-              rawTranscript = obj.transcript_raw;
-              rawVideoUrl   = obj.video_url   || '';
-              rawVideoTitle = obj.video_titulo || selected.titulo;
-            }
-            if (obj.status) {
-              result.innerHTML = `<div class="s-status">
-                <span class="dot"></span><span class="dot"></span><span class="dot"></span>
-                <span>${esc(obj.status)}</span>
-              </div>`;
-            }
-            if (obj.text) {
-              fullText += obj.text;
-              result.innerHTML = `<div class="s-md">${parseMarkdown(fullText)}</div>`;
-              addTableCopyBtns();
-            }
-          } catch { /* ignore */ }
-        }
-      }
     } catch (e) {
       result.innerHTML = `<p style="color:#c00;font-size:13px;padding:8px 0">Error: ${esc(e.message)}</p>`;
     }
@@ -316,35 +295,10 @@ ${parseMarkdown(md)}
 </body></html>`;
   }
 
-  // ── Markdown parser (simple) ──────────────────────
-  function parseMarkdown(md) {
-    let h = md;
-    h = h.replace(/^\|(.+)\|\s*\n\|[-| :]+\|\s*\n((?:\|.+\|\s*\n?)*)/gm, (_, hdr, body) => {
-      const ths  = hdr.split('|').filter(s => s.trim()).map(s => `<th>${esc(s.trim())}</th>`).join('');
-      const rows = body.trim().split('\n').filter(Boolean).map(row => {
-        const cells = row.split('|').slice(1, -1).map(s => `<td>${esc(s.trim())}</td>`).join('');
-        return `<tr>${cells}</tr>`;
-      }).join('');
-      return `<table><thead><tr>${ths}</tr></thead><tbody>${rows}</tbody></table>`;
-    });
-    h = h.replace(/^### (.+)$/gm, '<h3>$1</h3>');
-    h = h.replace(/^## (.+)$/gm,  '<h2>$1</h2>');
-    h = h.replace(/^# (.+)$/gm,   '<h1>$1</h1>');
-    h = h.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
-    h = h.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-    h = h.replace(/\*(.+?)\*/g,     '<em>$1</em>');
-    h = h.replace(/(^[-*] .+$(\n^[-*] .+$)*)/gm, block => {
-      const items = block.split('\n').map(l => `<li>${l.replace(/^[-*] /, '')}</li>`).join('');
-      return `<ul>${items}</ul>`;
-    });
-    h = h.replace(/^---$/gm, '<hr>');
-    h = h.replace(/\n{2,}/g, '</p><p>').replace(/\n/g, '<br>');
-    h = `<p>${h}</p>`;
-    h = h.replace(/<p>(<(?:table|ul|ol|h[1-6]|hr)[^>]*>)/g, '$1');
-    h = h.replace(/(<\/(?:table|ul|ol|h[1-6]|hr)>)<\/p>/g, '$1');
-    h = h.replace(/<p><\/p>/g, '').replace(/<p><br><\/p>/g, '');
-    return h;
-  }
+  // ── Markdown ──────────────────────────────────────
+  // static/md.js: el parser hecho a mano que había acá metía en el HTML los
+  // títulos, negritas y links del modelo sin escapar.
+  function parseMarkdown(md) { return DianaMD.render(md); }
 
   function esc(s) {
     return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');

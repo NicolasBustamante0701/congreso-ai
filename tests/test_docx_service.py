@@ -78,3 +78,37 @@ def test_incluye_pie():
 
 def test_markdown_vacio_no_revienta():
     assert zipfile.is_zipfile(io.BytesIO(markdown_to_docx("")))
+
+
+# ── Tablas que el modelo arma "mal" pero GFM acepta ─────────────────────────
+
+def test_fila_con_mas_columnas_no_rompe_el_export():
+    md = "| A | B |\n|---|---|\n| 1 | 2 | 3 |\n| solo |"
+    tabla = render(md).tables[0]
+    assert len(tabla.columns) == 2
+    assert tabla.cell(1, 1).text == "2 | 3"      # lo de más no se pierde
+    assert tabla.cell(2, 0).text == "solo" and tabla.cell(2, 1).text == ""
+
+
+def test_pipe_escapado_queda_dentro_de_la_celda():
+    md = "| Norma | Nota |\n|---|---|\n| Ley 1 \\| 2 | ok |"
+    tabla = render(md).tables[0]
+    assert tabla.cell(1, 0).text == "Ley 1 | 2"
+    assert tabla.cell(1, 1).text == "ok"
+
+
+def test_celdas_con_negrita_y_link_reales():
+    md = ("| Proyecto | Estado |\n|---|---|\n"
+          "| [14864](https://wb2server.congreso.gob.pe/x) | **Archivado** |")
+    doc = render(md)
+    celda_link = doc.tables[0].cell(1, 0)
+    assert "14864" in celda_link.text
+    assert "w:hyperlink" in celda_link._tc.xml
+    runs = doc.tables[0].cell(1, 1).paragraphs[0].runs
+    assert any(r.bold and r.text == "Archivado" for r in runs)
+
+
+def test_tabla_sin_pipe_final():
+    md = "| A | B\n|---|---\n| 1 | 2"
+    tabla = render(md).tables[0]
+    assert tabla.cell(1, 1).text == "2"
