@@ -1,6 +1,8 @@
 """Rutas de documentos: catálogo de PDFs, miniaturas, carga y subida."""
+import asyncio
+
 from fastapi import APIRouter, File, Query, Request, UploadFile
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from config import logger, static_file
 from scraper import fetch_destacados, fetch_proyectos
@@ -98,11 +100,13 @@ async def pdf_thumbnail(url: str = Query(...)):
         r = await pdf_service.download(url, timeout=20)
         if not pdf_service.looks_like_pdf(r):
             return Response(status_code=404, content=b"not a pdf")
-        return Response(content=pdf_service.render_thumbnail(r.content),
-                        media_type="image/png")
-    except Exception as e:
-        logger.debug("pdf_thumbnail falló para %s: %s", url, e)
+        png = await asyncio.to_thread(pdf_service.render_thumbnail, r.content)
+        return Response(content=png, media_type="image/png")
+    except pdf_service.UrlNoPermitida as e:
         return Response(status_code=400, content=str(e).encode())
+    except Exception as e:
+        logger.warning("pdf_thumbnail falló para %s: %s", url, e)
+        return Response(status_code=502, content=b"no se pudo generar la miniatura")
 
 
 @router.post("/load-pdf-url")
@@ -111,18 +115,26 @@ async def load_pdf_url(request: Request):
     url = body.get("url", "")
     try:
         r = await pdf_service.download(url)
-        text, pages = pdf_service.extract_text(r.content)
+        if not pdf_service.looks_like_pdf(r):
+            return JSONResponse({"ok": False, "error": f"La URL no devolvió un PDF (HTTP {r.status_code})."})
+        text, pages = await asyncio.to_thread(pdf_service.extract_text, r.content)
         return {"ok": True, "pages": pages, "text": text, "filename": url.split("/")[-1]}
+    except pdf_service.UrlNoPermitida as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
     except Exception as e:
         logger.warning("load_pdf_url falló para %s: %s", url, e)
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": f"No se pudo leer el PDF: {e}"}
 
 
 @router.post("/upload-pdf")
 async def upload_pdf(file: UploadFile = File(...)):
+    data = await file.read(pdf_service.MAX_PDF_BYTES + 1)
+    if len(data) > pdf_service.MAX_PDF_BYTES:
+        mb = pdf_service.MAX_PDF_BYTES // (1024 * 1024)
+        return JSONResponse({"ok": False, "error": f"El PDF supera {mb} MB."}, status_code=413)
     try:
-        text, pages = pdf_service.extract_text(await file.read())
+        text, pages = await asyncio.to_thread(pdf_service.extract_text, data)
         return {"ok": True, "pages": pages, "text": text, "filename": file.filename}
     except Exception as e:
         logger.warning("upload_pdf falló para %s: %s", file.filename, e)
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": f"No se pudo leer el PDF: {e}"}

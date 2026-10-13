@@ -1,4 +1,6 @@
 """Exportación de respuestas a documentos descargables."""
+import asyncio
+
 from fastapi import APIRouter, Request
 from fastapi.responses import Response
 
@@ -14,7 +16,7 @@ DOCX_MEDIA_TYPE = (
 @router.post("/export/docx")
 async def export_docx(request: Request):
     body = await request.json()
-    content = markdown_to_docx(body.get("content", ""))
+    content = await asyncio.to_thread(markdown_to_docx, body.get("content", ""))
     return Response(
         content=content,
         media_type=DOCX_MEDIA_TYPE,

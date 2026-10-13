@@ -2,30 +2,71 @@
 Extracción de texto y miniaturas de PDFs.
 
 PyMuPDF (fitz) se importa dentro de cada función: es pesado y solo hace falta
-cuando el usuario abre o sube un documento.
+cuando el usuario abre o sube un documento. Las funciones de fitz son
+síncronas y con un expediente grande tardan segundos: quien las llama desde
+un endpoint async las corre con asyncio.to_thread para no frenar el server.
 """
 import httpx
 
 from config import logger
 
 MAX_TEXT_CHARS = 40000
-UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0"
+MAX_PDF_BYTES = 50 * 1024 * 1024
+
+
+class UrlNoPermitida(ValueError):
+    """La URL no es de congreso.gob.pe."""
 
 
 async def download(url: str, timeout: int = 30) -> httpx.Response:
-    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as c:
-        return await c.get(url, headers={"User-Agent": UA})
+    """
+    Baja un PDF, solo de dominios del Congreso.
+
+    Antes usaba un httpx.AsyncClient pelado: /pdf-thumbnail y /load-pdf-url
+    descargaban cualquier URL que llegara (incluida la red local). Ahora va
+    por el cliente del scraper, cuyo hook corta cualquier request — también
+    una redirección — que salga de congreso.gob.pe.
+    """
+    import scraper
+
+    if not scraper.url_permitida(url):
+        raise UrlNoPermitida("Solo se pueden abrir PDFs de congreso.gob.pe")
+    async with scraper._client() as c:
+        c.timeout = httpx.Timeout(timeout)
+        return await c.get(url)
 
 
 def extract_text(data: bytes) -> tuple[str, int]:
-    """Devuelve (texto, número de páginas), recortado a MAX_TEXT_CHARS."""
+    """
+    Devuelve (texto, número de páginas), recortado a MAX_TEXT_CHARS.
+
+    Cada página va precedida de «[Página N]» (N = página física del PDF, no
+    la numeración impresa) para que las respuestas puedan citar de dónde sale
+    cada dato. Las páginas sin texto extraíble (escaneadas) se listan al final
+    en vez de pasar en silencio.
+    """
     import fitz
 
     doc = fitz.open(stream=data, filetype="pdf")
     pages = len(doc)
-    text = "\n\n".join(page.get_text() for page in doc).strip()
+    partes, vacias = [], []
+    for i, page in enumerate(doc, start=1):
+        t = page.get_text().strip()
+        if t:
+            partes.append(f"[Página {i}]\n{t}")
+        else:
+            vacias.append(i)
+    text = "\n\n".join(partes)
     if len(text) > MAX_TEXT_CHARS:
-        text = text[:MAX_TEXT_CHARS] + f"\n\n[Texto recortado — documento original: {pages} páginas]"
+        corte = text[:MAX_TEXT_CHARS]
+        ultima = corte.rfind("[Página ")
+        hasta = corte[ultima:].split("]")[0].replace("[Página ", "") if ultima >= 0 else "?"
+        text = corte + (f"\n\n[Texto recortado: se leyó hasta la página {hasta} "
+                        f"de {pages}. Lo que sigue no está en este texto.]")
+    if vacias:
+        lista = ", ".join(map(str, vacias[:30])) + ("…" if len(vacias) > 30 else "")
+        text += (f"\n\n[Páginas sin texto extraíble (probablemente escaneadas): "
+                 f"{lista}. Su contenido no está disponible.]")
     return text, pages
 
 

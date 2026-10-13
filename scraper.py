@@ -66,8 +66,13 @@ DIAS_NOTICIAS_RECIENTES = 7
 def _client():
     # verify=False: los servidores del Congreso (api.congreso.gob.pe, wb2server, comunicaciones)
     # presentan certs autofirmados o caducados — sin esto fallan todas las llamadas.
+    #
+    # El hook de request es el candado de dominios a nivel de cliente: corre
+    # en CADA request, incluidas las redirecciones que sigue httpx, así que
+    # una URL oficial que redirige afuera también se corta.
     return httpx.AsyncClient(timeout=TIMEOUT, verify=False,
-                             follow_redirects=True, headers=HEADERS)
+                             follow_redirects=True, headers=HEADERS,
+                             event_hooks={"request": [_solo_congreso]})
 
 
 # ── Lista blanca de dominios ─────────────────────────────────────────────────
@@ -84,7 +89,17 @@ def _client():
 DOMINIO_OFICIAL = "congreso.gob.pe"
 
 
-def _url_permitida(url: str) -> bool:
+class DominioNoPermitido(httpx.RequestError):
+    """Se intentó salir del dominio del Congreso."""
+
+
+async def _solo_congreso(request: httpx.Request) -> None:
+    if not url_permitida(str(request.url)):
+        logger.warning("Request bloqueado (no es del Congreso): %s", request.url)
+        raise DominioNoPermitido(f"dominio no permitido: {request.url.host}", request=request)
+
+
+def url_permitida(url: str) -> bool:
     """True solo si la URL es del dominio del Congreso o un subdominio suyo."""
     try:
         host = (urllib.parse.urlparse(url).hostname or "").lower()
@@ -95,6 +110,9 @@ def _url_permitida(url: str) -> bool:
     return host == DOMINIO_OFICIAL or host.endswith("." + DOMINIO_OFICIAL)
 
 
+_url_permitida = url_permitida   # nombre viejo, lo usan los tests
+
+
 async def _get_oficial(c, url, **kw):
     """
     GET que solo sale hacia el dominio del Congreso.
@@ -102,7 +120,7 @@ async def _get_oficial(c, url, **kw):
     Devuelve None si la URL apunta a otro lado, para que quien llama lo saltee
     y siga con el resto en vez de romper la respuesta entera.
     """
-    if not _url_permitida(url):
+    if not url_permitida(url):
         logger.warning("Enlace externo descartado (no es del Congreso): %s", url)
         return None
     return await c.get(url, **kw)
@@ -1641,8 +1659,7 @@ async def fetch_formula_legal(numero_proyecto: str):
 
     # Los servidores del Congreso rechazan pedidos sin sus headers/cookies
     # esperados (Referer, User-Agent) y con certs autofirmados — por eso se
-    # usa el cliente del scraper (_client(), verify=False) en vez del
-    # cliente genérico de services/pdf.py, que da 400/403 acá.
+    # usa el cliente del scraper (_client(), verify=False).
     try:
         async with _client() as c:
             resp = await _get_oficial(c, pdf_adjunto["url"])
@@ -1655,7 +1672,7 @@ async def fetch_formula_legal(numero_proyecto: str):
     if not pdf_service.looks_like_pdf(resp):
         return {"error": f"El adjunto no es un PDF válido (código {resp.status_code})."}
 
-    texto = pdf_service.safe_extract_text(resp.content)
+    texto = await asyncio.to_thread(pdf_service.safe_extract_text, resp.content)
     if not texto:
         return {"error": "No se pudo extraer texto del PDF del proyecto (puede ser una imagen escaneada sin OCR)."}
 
@@ -1785,13 +1802,17 @@ async def fetch_agenda_pleno():
             return {"error": "No se pudo descargar la agenda del Pleno."}
 
     # El documento es un PDF servido directamente
-    try:
+    def _leer_pdf(data):
         import fitz
-        doc = fitz.open(stream=rd.content, filetype="pdf")
-        texto = "\n".join(page.get_text() for page in doc).strip()
-        estructura = _parse_indice_agenda_pleno(doc)
+        doc = fitz.open(stream=data, filetype="pdf")
+        return ("\n".join(page.get_text() for page in doc).strip(),
+                _parse_indice_agenda_pleno(doc))
+
+    try:
+        # fitz es síncrono: en un hilo para no frenar el event loop.
+        texto, estructura = await asyncio.to_thread(_leer_pdf, rd.content)
     except Exception as _e:
-        logger.debug("PDF parse failed, fallback to HTML text: %s", _e)
+        logger.warning("agenda del Pleno: el PDF no se pudo leer, uso el texto HTML: %s", _e)
         texto = BeautifulSoup(rd.text, "html.parser").get_text(separator="\n", strip=True)
         estructura = []
 

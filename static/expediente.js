@@ -412,16 +412,17 @@
   }
 
   $('exp-back').addEventListener('click', () => {
-    window.parent.postMessage('close-expediente', '*');
+    window.parent.postMessage('close-expediente', location.origin);
   });
 
   $('exp-portal').addEventListener('click', (e) => {
     e.preventDefault();
     const url = e.currentTarget.dataset.url;
-    if (url) window.parent.postMessage({ type: 'open-external', url }, '*');
+    if (url) window.parent.postMessage({ type: 'open-external', url }, location.origin);
   });
 
   window.addEventListener('message', (e) => {
+    if (e.origin !== location.origin) return;   // solo mensajes de la propia app
     if (e.data && e.data.type === 'theme') {
       document.documentElement.dataset.theme = e.data.dark ? 'dark' : 'light';
     }

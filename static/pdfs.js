@@ -1,5 +1,6 @@
 /* ── Tema (sincronizado en vivo con el chat principal) ──── */
 window.addEventListener("message", (e) => {
+  if (e.origin !== location.origin) return;   // solo mensajes de la propia app
   if (e.data && e.data.type === "theme") {
     document.documentElement.dataset.theme = e.data.dark ? "dark" : "light";
   }
@@ -145,7 +146,7 @@ function selectPdf(idx) {
     link.style.display = 'inline-flex';
     link.onclick = (ev) => {
       ev.preventDefault();
-      window.parent.postMessage({ type: 'open-external', url: selected.url }, '*');
+      window.parent.postMessage({ type: 'open-external', url: selected.url }, location.origin);
     };
   } else {
     link.style.display = 'none';
@@ -162,7 +163,7 @@ function selectPdf(idx) {
       // Extract project number from title for a chat query
       const match = selected.titulo.match(/\[([^\]]+)\]/);
       const num = match ? match[1] : selected.titulo.slice(0, 40);
-      window.parent.postMessage({ type: 'query-proyecto', numero: num, titulo: selected.titulo }, '*');
+      window.parent.postMessage({ type: 'query-proyecto', numero: num, titulo: selected.titulo }, location.origin);
     } else {
       cargarAlChat(selected);
     }
@@ -227,7 +228,7 @@ function cargarAlChat(pdf) {
     type: 'load-pdf',
     url: pdf.url,
     titulo: pdf.titulo
-  }, '*');
+  }, location.origin);
 }
 
 function escHtml(str) {

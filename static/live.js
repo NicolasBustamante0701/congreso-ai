@@ -1,5 +1,6 @@
 /* ── Tema (sincronizado en vivo con el chat principal) ──── */
 window.addEventListener("message", (e) => {
+  if (e.origin !== location.origin) return;   // solo mensajes de la propia app
   if (e.data && e.data.type === "theme") {
     document.documentElement.dataset.theme = e.data.dark ? "dark" : "light";
   }
@@ -533,6 +534,7 @@ let _exportReqId = 0;
 const _exportCallbacks = {};
 
 window.addEventListener("message", (e) => {
+  if (e.origin !== location.origin) return;   // solo mensajes de la propia app
   if (!e.data || !e.data.reqId || !_exportCallbacks[e.data.reqId]) return;
   const cb = _exportCallbacks[e.data.reqId];
   delete _exportCallbacks[e.data.reqId];
@@ -546,7 +548,7 @@ function requestExport(type, payload, btn) {
   btn.textContent = "Generando…";
   const reqId = ++_exportReqId;
   _exportCallbacks[reqId] = () => { btn.disabled = false; btn.innerHTML = orig; };
-  window.parent.postMessage({ type, ...payload, reqId }, "*");
+  window.parent.postMessage({ type, ...payload, reqId }, location.origin);
 }
 
 function exportPdf(html, btn) {

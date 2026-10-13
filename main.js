@@ -141,9 +141,13 @@ function startServer() {
   const cwd     = isDev ? __dirname                                          : path.join(process.resourcesPath, 'server');
 
   serverReady = false;
+  // detached: el server es líder de su propio grupo de procesos, así al
+  // cerrar se le manda la señal al GRUPO entero y los ffmpeg que lanzó para
+  // transcribir no quedan huérfanos consumiendo red y CPU.
   const proc = spawn(exe, args, {
     env: { ...process.env, ...aiEnv(), PORT: String(PORT), DIANA_LOG_DIR: app.getPath('logs') },
     cwd,
+    detached: process.platform !== 'win32',
   });
   py = proc;
   logMain(`server iniciado pid=${proc.pid}`);
@@ -167,6 +171,18 @@ function startServer() {
   });
 }
 
+// Señal al grupo del server (server + ffmpeg/yt-dlp hijos). Si el grupo ya
+// no existe, cae a la señal directa al proceso.
+function killServer(proc, signal = 'SIGTERM') {
+  if (!proc) return;
+  try {
+    if (process.platform !== 'win32') process.kill(-proc.pid, signal);
+    else proc.kill(signal);
+  } catch {
+    try { proc.kill(signal); } catch { /* ya terminó */ }
+  }
+}
+
 // Reinicio a pedido, para que el server tome una API key nueva. No cuenta
 // como caída: no pasa por el backoff de scheduleRestart.
 let restartRequested = false;
@@ -184,7 +200,7 @@ function restartServer() {
     restartRequested = true;
     serverReady = false;
     py.once('exit', arrancar);
-    py.kill();
+    killServer(py);
   });
 }
 
@@ -240,7 +256,7 @@ function healthCheck() {
     if (healthFails >= HEALTH_FAILS && py) {
       healthFails = 0;
       logMain(`server colgado, matando pid=${py.pid}`);
-      py.kill('SIGKILL');
+      killServer(py, 'SIGKILL');
     }
   });
 }
@@ -332,13 +348,14 @@ function createWindow() {
     height: 840,
     minWidth:  900,
     minHeight: 600,
-    title: 'Asistente Congreso Perú',
+    title: 'Diana',
     icon: path.join(__dirname, 'static', 'app-icon.png'),
     backgroundColor: '#ffffff',
     frame: false,
     webPreferences: {
       nodeIntegration:  false,
       contextIsolation: true,
+      sandbox:          true,   // el preload solo usa contextBridge/ipcRenderer
       partition: 'persist:congreso',
       preload: path.join(__dirname, 'preload.js'),
     },
@@ -379,22 +396,41 @@ function createWindow() {
 
   // Links externos se abren en el navegador del sistema
   win.webContents.setWindowOpenHandler(({ url }) => {
-    if (!url.startsWith('http://localhost')) shell.openExternal(url);
+    abrirAfuera(url);
     return { action: 'deny' };
   });
   win.webContents.on('will-navigate', (e, url) => {
-    if (!url.startsWith('http://localhost')) {
+    if (!esUrlPropia(url)) {
       e.preventDefault();
-      shell.openExternal(url);
+      abrirAfuera(url);
     }
   });
 }
 
+// ── Navegación: qué es "la app" y qué se abre afuera ─────────
+// Antes era url.startsWith('http://localhost'), que también dejaba pasar
+// http://localhost.evil.com o http://localhost:9999 (otro servicio local).
+function esUrlPropia(raw) {
+  try {
+    const u = new URL(raw);
+    return u.protocol === 'http:' &&
+           (u.hostname === 'localhost' || u.hostname === '127.0.0.1') &&
+           Number(u.port) === PORT;
+  } catch { return false; }
+}
+
+// Solo http/https van al navegador del sistema: file:, javascript:, smb:…
+// que pudieran venir en un enlace raspado no se abren.
+function abrirAfuera(raw) {
+  try {
+    const u = new URL(raw);
+    if ((u.protocol === 'https:' || u.protocol === 'http:') && !esUrlPropia(raw)) shell.openExternal(u.href);
+  } catch { /* URL inválida: se ignora */ }
+}
+
 // ── IPC: abrir enlace externo ────────────────────────────────
 ipcMain.handle('open-external', (e, url) => {
-  if (typeof url === 'string' && (url.startsWith('https://') || url.startsWith('http://'))) {
-    shell.openExternal(url);
-  }
+  if (typeof url === 'string') abrirAfuera(url);
 });
 
 // ── IPC: ventana de Sesiones ─────────────────────────────────
@@ -413,13 +449,20 @@ ipcMain.handle('open-sessions', () => {
     webPreferences: {
       nodeIntegration:  false,
       contextIsolation: true,
+      sandbox:          true,   // el preload solo usa contextBridge/ipcRenderer
       preload: path.join(__dirname, 'preload.js'),
     },
   });
   sessionsWin.loadURL(`http://localhost:${PORT}/sessions`);
   sessionsWin.webContents.setWindowOpenHandler(({ url }) => {
-    if (!url.startsWith('http://localhost')) shell.openExternal(url);
+    abrirAfuera(url);
     return { action: 'deny' };
+  });
+  sessionsWin.webContents.on('will-navigate', (e, url) => {
+    if (!esUrlPropia(url)) {
+      e.preventDefault();
+      abrirAfuera(url);
+    }
   });
   sessionsWin.on('closed', () => { sessionsWin = null; });
 });
@@ -555,12 +598,12 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   quitting = true;
-  if (py) py.kill();
+  killServer(py);
   app.quit();
 });
 
 app.on('before-quit', () => {
   quitting = true;
   clearTimeout(restartTimer);
-  if (py) py.kill();
+  killServer(py);
 });

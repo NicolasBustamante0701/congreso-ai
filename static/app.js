@@ -24,7 +24,7 @@
     // el cambio se vea al toque si ya están abiertos (si no, leen el mismo
     // localStorage al cargar — ver live.html/pdfs.html).
     for (const id of ['live-iframe', 'pdfs-iframe', 'expediente-iframe']) {
-      document.getElementById(id)?.contentWindow?.postMessage({ type: 'theme', dark }, '*');
+      document.getElementById(id)?.contentWindow?.postMessage({ type: 'theme', dark }, location.origin);
     }
   }
 
@@ -1391,6 +1391,7 @@ ${table.outerHTML}
   if (navPdfs) navPdfs.addEventListener('click', switchToPdfs);
 
   window.addEventListener('message', (e) => {
+    if (e.origin !== location.origin) return;   // solo mensajes de la propia app
     if (e.data === 'close-live') { switchToChat(); return; }
     if (e.data === 'close-expediente') { switchToChat(); return; }
     if (e.data && e.data.type === 'load-pdf') {
@@ -1412,20 +1413,20 @@ ${table.outerHTML}
       const { html, reqId } = e.data;
       if (window.electronAPI) {
         window.electronAPI.exportPDF(html)
-          .then(() => e.source.postMessage({ type: 'export-done', reqId }, '*'))
-          .catch(err => e.source.postMessage({ type: 'export-error', reqId, message: String(err) }, '*'));
+          .then(() => e.source.postMessage({ type: 'export-done', reqId }, location.origin))
+          .catch(err => e.source.postMessage({ type: 'export-error', reqId, message: String(err) }, location.origin));
       } else {
         const w = window.open('', '_blank');
         if (w) { w.document.write(html); w.document.close(); setTimeout(() => w.print(), 400); }
-        e.source.postMessage({ type: 'export-done', reqId }, '*');
+        e.source.postMessage({ type: 'export-done', reqId }, location.origin);
       }
     }
     if (e.data && e.data.type === 'export-word') {
       const { content, filename, reqId } = e.data;
       if (window.electronAPI) {
         window.electronAPI.exportWord(content)
-          .then(() => e.source.postMessage({ type: 'export-done', reqId }, '*'))
-          .catch(err => e.source.postMessage({ type: 'export-error', reqId, message: String(err) }, '*'));
+          .then(() => e.source.postMessage({ type: 'export-done', reqId }, location.origin))
+          .catch(err => e.source.postMessage({ type: 'export-error', reqId, message: String(err) }, location.origin));
       } else {
         fetch('/export/docx', {
           method: 'POST',
@@ -1440,9 +1441,9 @@ ${table.outerHTML}
             a.download = `${filename}.docx`;
             a.click();
             URL.revokeObjectURL(url);
-            e.source.postMessage({ type: 'export-done', reqId }, '*');
+            e.source.postMessage({ type: 'export-done', reqId }, location.origin);
           })
-          .catch(err => e.source.postMessage({ type: 'export-error', reqId, message: String(err) }, '*'));
+          .catch(err => e.source.postMessage({ type: 'export-error', reqId, message: String(err) }, location.origin));
       }
     }
   });
