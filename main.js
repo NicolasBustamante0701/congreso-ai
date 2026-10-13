@@ -77,6 +77,7 @@ const AI_SETTINGS_FILE = path.join(app.getPath('userData'), 'ai-settings.json');
 const PROVIDER_ENV = {
   gemini: 'GEMINI_API_KEY', groq: 'GROQ_API_KEY',
   openai: 'OPENAI_API_KEY', cerebras: 'CEREBRAS_API_KEY',
+  mistral: 'MISTRAL_API_KEY',
 };
 
 // Sin llavero disponible la key NO se escribe a disco en texto plano: queda
@@ -121,6 +122,10 @@ function aiEnv() {
   // Con Groq como proveedor de chat, esa misma key sirve para transcribir.
   const groq = decryptKey(s.groqKey, 'groqKey');
   if (groq && !env.GROQ_API_KEY) env.GROQ_API_KEY = groq;
+  // Key de respaldo (Mistral gratis): entra cuando el proveedor del chat
+  // falla o está saturado — ver LLM_FALLBACKS en config.py.
+  const respaldo = decryptKey(s.mistralKey, 'mistralKey');
+  if (respaldo && !env.MISTRAL_API_KEY) env.MISTRAL_API_KEY = respaldo;
   return env;
 }
 
@@ -485,15 +490,17 @@ ipcMain.handle('ai-settings-get', () => {
     hasKey:     Boolean(key),
     keyHint:    key ? key.slice(-4) : '',
     hasGroqKey: Boolean(decryptKey(s.groqKey, 'groqKey')),
+    hasMistralKey: Boolean(decryptKey(s.mistralKey, 'mistralKey')),
   };
 });
 
-ipcMain.handle('ai-settings-save', async (event, { provider, apiKey, groqKey } = {}) => {
+ipcMain.handle('ai-settings-save', async (event, { provider, apiKey, groqKey, mistralKey } = {}) => {
   if (!PROVIDER_ENV[provider]) return { ok: false, error: 'Proveedor desconocido.' };
   const s = readAiSettings();
   s.provider = provider;
   if (typeof apiKey === 'string' && apiKey.trim()) s.apiKey = encryptKey(apiKey.trim(), 'apiKey');
   if (typeof groqKey === 'string' && groqKey.trim()) s.groqKey = encryptKey(groqKey.trim(), 'groqKey');
+  if (typeof mistralKey === 'string' && mistralKey.trim()) s.mistralKey = encryptKey(mistralKey.trim(), 'mistralKey');
   try {
     fs.writeFileSync(AI_SETTINGS_FILE, JSON.stringify(s), { encoding: 'utf8', mode: 0o600 });
   } catch (e) {

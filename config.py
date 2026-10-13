@@ -165,6 +165,17 @@ _PROVIDERS = {
         "router_model": "gpt-oss-120b",
         "main_model":   "gpt-oss-120b",
     },
+    # Plan gratis "Experiment" de Mistral: sin tarjeta (solo SMS), ~1000
+    # millones de tokens al mes y 128k de contexto. Es el respaldo que entra
+    # cuando Gemini gratis está saturado: Groq gratis corta en 8000 tokens
+    # por pedido y una consulta de 15 días de proyectos pide ~24 000.
+    "mistral": {
+        "base_url":     "https://api.mistral.ai/v1",
+        "api_key":      os.getenv("MISTRAL_API_KEY", ""),
+        "router_model": "mistral-small-latest",
+        "main_model":   "mistral-medium-latest",
+        "modelos_respaldo": ["mistral-small-latest"],
+    },
     "openai": {
         "base_url":     None,  # SDK usa el endpoint oficial por default
         "api_key":      os.getenv("OPENAI_API_KEY", ""),
@@ -188,7 +199,9 @@ if _fallbacks_env == "none":
 elif _fallbacks_env:
     _orden = [p.strip() for p in _fallbacks_env.split(",")]
 else:
-    _orden = ["groq", "gemini", "cerebras", "openai"]
+    # Mistral antes que Groq: acepta las consultas grandes que Groq gratis
+    # rechaza con 413.
+    _orden = ["mistral", "groq", "gemini", "cerebras", "openai"]
 LLM_FALLBACKS = [p for p in _orden
                  if p in _PROVIDERS and p != LLM_PROVIDER and _PROVIDERS[p]["api_key"]]
 

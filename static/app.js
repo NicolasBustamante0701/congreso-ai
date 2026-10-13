@@ -124,7 +124,7 @@
   // ════════════════════════════════════════════════════════════════════════
   // Estado del asistente (pie de la navegación)
   // ════════════════════════════════════════════════════════════════════════
-  const NOMBRE_PROV = { gemini: 'Gemini', groq: 'Groq', openai: 'OpenAI', cerebras: 'Cerebras' };
+  const NOMBRE_PROV = { gemini: 'Gemini', groq: 'Groq', openai: 'OpenAI', cerebras: 'Cerebras', mistral: 'Mistral' };
   let estadoIA = null;
 
   async function refrescarEstado() {
@@ -934,10 +934,12 @@
   // Ajustes
   // ════════════════════════════════════════════════════════════════════════
   const aiProvider = $('ai-provider'), aiKey = $('ai-key'), aiGroqKey = $('ai-groq-key');
+  const aiMistralKey = $('ai-mistral-key');
   const aiStatus = $('ai-status'), aiMsg = $('ai-msg'), aiSave = $('ai-save'), aiClear = $('ai-clear');
   const AI_KEY_URLS = {
     gemini: 'https://aistudio.google.com/app/apikey', groq: 'https://console.groq.com/keys',
     openai: 'https://platform.openai.com/api-keys', cerebras: 'https://cloud.cerebras.ai',
+    mistral: 'https://console.mistral.ai/api-keys',
   };
   function aiSetMsg(text, kind) { aiMsg.textContent = text || ''; aiMsg.className = 'ai-msg' + (kind ? ' ' + kind : ''); }
 
@@ -949,6 +951,7 @@
     aiClear.hidden = !local?.hasKey;
     aiKey.placeholder = local?.hasKey ? `Guardada (termina en …${local.keyHint}). Pega otra para cambiarla` : 'Pega tu API key';
     aiGroqKey.placeholder = local?.hasGroqKey ? 'Guardada. Pega otra para cambiarla' : 'Solo para la transcripción de sesiones';
+    aiMistralKey.placeholder = local?.hasMistralKey ? 'Guardada. Pega otra para cambiarla' : 'Responde cuando Gemini está saturado';
     if (!server) {
       aiStatus.innerHTML = '<div class="d-alert d-alert--danger">No se pudo consultar el servidor local.</div>';
     } else if (!server.ready) {
@@ -967,9 +970,10 @@
     const provider = aiProvider.value;
     const key = aiKey.value.trim();
     const groqKey = aiGroqKey.value.trim();
+    const mistralKey = aiMistralKey.value.trim();
     const local = await api.aiSettingsGet();
     if (!key && local.hasKey && local.provider !== provider) { aiSetMsg(`Pega una API key de ${NOMBRE_PROV[provider]}.`, 'bad'); return; }
-    if (!key && !groqKey) { aiSetMsg('Pega una API key.', 'bad'); return; }
+    if (!key && !groqKey && !mistralKey) { aiSetMsg('Pega una API key.', 'bad'); return; }
     aiSave.disabled = true;
     try {
       if (key) {
@@ -982,10 +986,15 @@
         const t = await aiTest('groq', groqKey);
         if (!t.ok) { aiSetMsg('Key de Groq: ' + (t.error || 'no funcionó.'), 'bad'); return; }
       }
+      if (mistralKey) {
+        aiSetMsg('Probando la key de Mistral…');
+        const t = await aiTest('mistral', mistralKey);
+        if (!t.ok) { aiSetMsg('Key de Mistral: ' + (t.error || 'no funcionó.'), 'bad'); return; }
+      }
       aiSetMsg('Guardando y reiniciando el asistente…');
-      const res = await api.aiSettingsSave({ provider, apiKey: key, groqKey });
+      const res = await api.aiSettingsSave({ provider, apiKey: key, groqKey, mistralKey });
       if (!res.ok) { aiSetMsg(res.error || 'No se pudo guardar.', 'bad'); return; }
-      aiKey.value = ''; aiGroqKey.value = '';
+      aiKey.value = ''; aiGroqKey.value = ''; aiMistralKey.value = '';
       await aiRefresh();
       aiSetMsg('Listo. Diana ya puede responder.', 'ok');
     } catch (e) {
@@ -999,6 +1008,7 @@
     aiSave.addEventListener('click', saveAiSettings);
     aiKey.addEventListener('keydown', (e) => { if (e.key === 'Enter') saveAiSettings(); });
     $('ai-key-help').addEventListener('click', () => api.openExternal(AI_KEY_URLS[aiProvider.value]));
+    $('ai-mistral-help').addEventListener('click', () => api.openExternal(AI_KEY_URLS.mistral));
     aiClear.addEventListener('click', async () => {
       if (!confirm('¿Borrar tus API keys de esta computadora?')) return;
       aiClear.disabled = true;

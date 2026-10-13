@@ -57,7 +57,14 @@ LLM_PROVIDER=gemini     # groq | gemini | cerebras | openai
 ```
 
 Cada proveedor lee su propia key (`GEMINI_API_KEY`, `CEREBRAS_API_KEY`,
-`OPENAI_API_KEY`). Todos hablan por el SDK de `openai`, así que cambiar de
+`OPENAI_API_KEY`, `MISTRAL_API_KEY`).
+
+**Respaldo gratis recomendado: Mistral.** El tier gratis de Gemini se satura
+seguido (503) y el de Groq rechaza las consultas grandes (413, tope de 8000
+tokens por pedido). El plan "Experiment" de Mistral es gratis (sin tarjeta,
+verificación por SMS) y acepta consultas grandes: con `MISTRAL_API_KEY` (o la
+"Key de respaldo de Mistral" en Ajustes) entra primero en la cadena de
+respaldo. Key en https://console.mistral.ai/api-keys. Todos hablan por el SDK de `openai`, así que cambiar de
 proveedor es cambiar una línea del `.env`.
 
 ## Tests y lint
