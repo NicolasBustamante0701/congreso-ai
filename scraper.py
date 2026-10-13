@@ -1754,15 +1754,44 @@ async def fetch_formula_legal(numero_proyecto: str):
     if not pdf_service.looks_like_pdf(resp):
         return {"error": f"El adjunto no es un PDF válido (código {resp.status_code})."}
 
-    texto = await asyncio.to_thread(pdf_service.safe_extract_text, resp.content)
-    if not texto:
-        return {"error": "No se pudo extraer texto del PDF del proyecto (puede ser una imagen escaneada sin OCR)."}
+    from services import ocr
 
-    return {
+    try:
+        paginas = await asyncio.to_thread(pdf_service.extract_pages, resp.content)
+    except Exception as _e:
+        logger.warning("fórmula legal: el PDF no se pudo abrir: %s", _e)
+        return {"error": "No se pudo abrir el PDF del proyecto."}
+
+    partes = [f"[Página {i}]\n{t}" for i, t in enumerate(paginas, start=1) if t]
+    escaneadas = [i for i, t in enumerate(paginas, start=1) if not t]
+    resultado = {
         "numero": exp.get("numero", numero_proyecto),
         "fuente": f"texto extraído del PDF del proyecto ({pdf_adjunto['url']})",
-        "texto": texto,
     }
+    # Páginas escaneadas: antes quedaban como "sin texto" y Diana no podía
+    # decir nada de la fórmula legal (pasó con el 14864/2025-CR).
+    if escaneadas and ocr.disponible():
+        texto_ocr, sin_leer = await ocr.transcribir_paginas(resp.content, escaneadas)
+        if texto_ocr:
+            partes.append(texto_ocr)
+            resultado["fuente"] += "; páginas escaneadas leídas con OCR"
+            resultado["aviso_ocr"] = (
+                "Parte del texto viene de OCR sobre páginas escaneadas: lo transcribió "
+                "un modelo de IA y puede tener errores en números o nombres. Dilo en la "
+                "respuesta y recomienda verificar en el PDF oficial lo que sea decisivo."
+            )
+        escaneadas = sin_leer
+    if escaneadas:
+        partes.append("[Páginas escaneadas que no se pudieron leer: "
+                      + ", ".join(map(str, escaneadas)) + ". Su contenido no está disponible.]")
+
+    texto = "\n\n".join(partes)
+    if not texto.strip() or (not any(paginas) and "OCR" not in resultado["fuente"]):
+        return {"error": "No se pudo extraer texto del PDF del proyecto: es una imagen "
+                         "escaneada y el OCR no respondió. Revísalo en el PDF oficial: "
+                         + pdf_adjunto["url"]}
+    resultado["texto"] = texto[:pdf_service.MAX_TEXT_CHARS]
+    return resultado
 
 
 # ── Agenda de comisiones (próximos días) ──────────────────────

@@ -16,3 +16,7 @@ python-docx>=1.1.0
 # vía de un paso. Si hay un ffmpeg en el PATH, ese gana (ver
 # live_transcriber.ffmpeg_exe).
 imageio-ffmpeg>=0.5.1
+# OCR de PDFs escaneados con el framework Vision de macOS (services/ocr.py).
+# Solo macOS; en otro sistema el OCR cae a Gemini.
+pyobjc-framework-Vision>=10.0; sys_platform == "darwin"
+pyobjc-framework-Quartz>=10.0; sys_platform == "darwin"
