@@ -892,7 +892,7 @@
     const sesiones = agendaDatos.sesiones.filter((s) =>
       (!agendaCamara || (s.camara || '').toLowerCase().includes(agendaCamara.toLowerCase())) &&
       (!filtro || [s.tema, s.lugar, s.organiza].join(' ').toLowerCase().includes(filtro)));
-    $('agenda-fuente').textContent = `Fuente: ${agendaDatos.fuente} · consultado ${agendaDatos.actualizado} · ${sesiones.length} de ${agendaDatos.sesiones.length} actividades. Solo se muestran las que tienen fecha y hora publicadas.`;
+    $('agenda-fuente').textContent = `Fuente: ${agendaDatos.fuente} · consultado ${agendaDatos.actualizado} · ${sesiones.length} de ${agendaDatos.sesiones.length} actividades · horas de Lima (GMT-5). Solo se muestran las que tienen fecha y hora publicadas.`;
     if (!sesiones.length && agendaVista !== 'calendario') {
       lista.innerHTML = `<div class="d-card">${vacio(agendaDatos.sesiones.length ? 'Nada coincide con el filtro' : 'Sin actividades publicadas',
         agendaDatos.sesiones.length ? 'Prueba con otra cámara o quita el texto del filtro.' : 'La agenda oficial no tiene eventos en los próximos 14 días.')}</div>`;
@@ -1008,6 +1008,22 @@
   document.querySelectorAll('#agenda-vista .seg-btn').forEach((b) => b.addEventListener('click', () => elegirVista(b.dataset.vista)));
   elegirVista(agendaVista);
   alEntrar.agenda = () => cargarAgenda();
+
+  // ── Reloj de Lima (GMT-5) en la barra superior ──
+  // Siempre la hora de Lima, aunque la Mac esté en otro huso: las agendas y
+  // los plazos del Congreso se publican en hora peruana.
+  const fmtHoraLima = new Intl.DateTimeFormat('es-PE', {
+    timeZone: 'America/Lima', hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
+  const fmtFechaLima = new Intl.DateTimeFormat('es-PE', {
+    timeZone: 'America/Lima', weekday: 'short', day: 'numeric', month: 'short' });
+  function tickReloj() {
+    const ahora = new Date();
+    $('reloj-hora').textContent = fmtHoraLima.format(ahora);
+    const fecha = fmtFechaLima.format(ahora).replace(/\./g, '');
+    $('reloj-fecha').textContent = fecha.charAt(0).toUpperCase() + fecha.slice(1);
+  }
+  tickReloj();
+  setInterval(tickReloj, 1000);
   $('agenda-recargar').addEventListener('click', () => cargarAgenda(true));
   $('agenda-filtro').addEventListener('input', () => agendaDatos && pintarAgenda());
   document.querySelectorAll('#agenda-camaras .seg-btn').forEach((b) => b.addEventListener('click', () => {

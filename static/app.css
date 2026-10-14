@@ -457,3 +457,9 @@ html, body { height: 100%; overflow: hidden; }
   .cal-ev { font-size: 0; padding: 0; height: 6px; border-left: none; background: var(--cam); }
   .cal-leyenda-nota { margin-left: 0; }
 }
+
+/* ── Reloj de Lima en la barra superior ── */
+.reloj-lima { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.15; padding: 0 4px; white-space: nowrap; }
+.reloj-hora { font: 650 14px var(--d-font); font-variant-numeric: tabular-nums; color: var(--d-text); }
+.reloj-zona { font-size: 11px; color: var(--d-text-3); }
+@media (max-width: 760px) { .reloj-zona { display: none; } }
