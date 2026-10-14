@@ -423,3 +423,37 @@ html, body { height: 100%; overflow: hidden; }
 
 @media (max-width: 1080px) { .tarjetas { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 640px) { .tarjetas { grid-template-columns: 1fr; } }
+
+/* ── Agenda: vista calendario ── */
+.cal-leyenda { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; margin: 0 0 10px; font-size: 12px; color: var(--d-text-2); }
+.cal-leyenda i { display: inline-block; width: 9px; height: 9px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; background: var(--cam); }
+.cal-leyenda-nota { color: var(--d-text-3); margin-left: auto; }
+.cam-senado    { --cam: var(--d-info);   --cam-soft: var(--d-info-soft); }
+.cam-diputados { --cam: var(--d-accent); --cam-soft: var(--d-accent-soft); }
+.cam-comision  { --cam: var(--d-ok);     --cam-soft: var(--d-ok-soft); }
+.cam-congreso  { --cam: var(--d-warn);   --cam-soft: var(--d-warn-soft); }
+.cal { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); border: 1px solid var(--d-line);
+  border-radius: var(--d-r-md, 10px); overflow: hidden; background: var(--d-surface); }
+.cal-cab { padding: 8px 10px; font: 650 11px var(--d-font); text-transform: uppercase; letter-spacing: .04em;
+  color: var(--d-text-3); border-bottom: 1px solid var(--d-line); background: var(--d-surface-2); }
+.cal-dia { display: flex; flex-direction: column; gap: 4px; min-height: 104px; padding: 8px; text-align: left;
+  border: none; border-right: 1px solid var(--d-line); border-bottom: 1px solid var(--d-line);
+  background: transparent; color: var(--d-text); font: inherit; cursor: pointer; min-width: 0; width: 100%; overflow: hidden; }
+.cal-dia:nth-child(7n + 7) { border-right: none; }
+.cal-dia:hover { background: var(--d-hover); }
+.cal-dia.is-fuera { background: var(--d-surface-2); color: var(--d-text-3); cursor: default; }
+.cal-dia.is-fuera:not(.has-evs):hover { background: var(--d-surface-2); }
+.cal-dia.is-sel { box-shadow: inset 0 0 0 2px var(--d-accent); }
+.cal-num { font: 650 12px var(--d-font); font-variant-numeric: tabular-nums; color: var(--d-text-2); }
+.cal-dia.is-hoy .cal-num { display: inline-grid; place-items: center; align-self: flex-start; min-width: 22px; height: 22px;
+  padding: 0 6px; border-radius: 11px; background: var(--d-accent); color: #fff; }
+.cal-ev { display: block; box-sizing: border-box; max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; padding: 2px 6px;
+  border-left: 3px solid var(--cam); border-radius: 4px; background: var(--cam-soft); font-size: 11px; line-height: 1.5; color: var(--d-text); }
+.cal-ev b { font-weight: 650; font-variant-numeric: tabular-nums; }
+.cal-mas { font-size: 11px; color: var(--d-text-3); padding-left: 2px; }
+.cal-detalle { margin-top: 18px; }
+@media (max-width: 760px) {
+  .cal-dia { min-height: 64px; padding: 6px 4px; }
+  .cal-ev { font-size: 0; padding: 0; height: 6px; border-left: none; background: var(--cam); }
+  .cal-leyenda-nota { margin-left: 0; }
+}

@@ -865,6 +865,9 @@
   // ════════════════════════════════════════════════════════════════════════
   let agendaDatos = null;
   let agendaCamara = '';
+  let agendaVista = 'lista';
+  try { agendaVista = localStorage.getItem('diana_agenda_vista') || 'lista'; } catch { /* */ }
+  let agendaDiaSel = null;   // 'dd/mm/yyyy' elegido en el calendario
 
   async function cargarAgenda(forzar = false) {
     const lista = $('agenda-lista');
@@ -890,7 +893,7 @@
       (!agendaCamara || (s.camara || '').toLowerCase().includes(agendaCamara.toLowerCase())) &&
       (!filtro || [s.tema, s.lugar, s.organiza].join(' ').toLowerCase().includes(filtro)));
     $('agenda-fuente').textContent = `Fuente: ${agendaDatos.fuente} · consultado ${agendaDatos.actualizado} · ${sesiones.length} de ${agendaDatos.sesiones.length} actividades. Solo se muestran las que tienen fecha y hora publicadas.`;
-    if (!sesiones.length) {
+    if (!sesiones.length && agendaVista !== 'calendario') {
       lista.innerHTML = `<div class="d-card">${vacio(agendaDatos.sesiones.length ? 'Nada coincide con el filtro' : 'Sin actividades publicadas',
         agendaDatos.sesiones.length ? 'Prueba con otra cámara o quita el texto del filtro.' : 'La agenda oficial no tiene eventos en los próximos 14 días.')}</div>`;
       return;
@@ -901,7 +904,12 @@
       if (!porDia.has(k)) porDia.set(k, []);
       porDia.get(k).push(s);
     }
-    lista.innerHTML = [...porDia.entries()].map(([fecha, ss]) => {
+    if (agendaVista === 'calendario') { pintarCalendario(sesiones, porDia); return; }
+    lista.innerHTML = htmlDias(porDia);
+  }
+
+  function htmlDias(porDia) {
+    return [...porDia.entries()].map(([fecha, ss]) => {
       const dt = new Date(ss[0].iso);
       const largo = dt.toLocaleDateString('es-PE', { weekday: 'long', day: 'numeric', month: 'long' });
       return `<div class="agenda-dia"><h3 class="agenda-dia-t">${esc(ss[0].dia)} <small>${esc(largo)}</small></h3>
@@ -921,6 +929,84 @@
           </div>`; }).join('')}</div></div>`;
     }).join('');
   }
+
+  // ── Vista calendario ──
+  // La fuente publica 14 días hacia adelante: la grilla va de lunes a domingo
+  // y cubre desde la semana de hoy hasta el día 14. Los días fuera de ese
+  // rango se ven apagados (no hay datos, no es que no haya actividad).
+  const DIAS_FUENTE = 14;
+  const claveDia = (d) => `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
+  function claseCamara(c) {
+    c = (c || '').toLowerCase();
+    if (c.includes('senado')) return 'cam-senado';
+    if (c.includes('diputad')) return 'cam-diputados';
+    if (c.includes('comisi')) return 'cam-comision';
+    return 'cam-congreso';
+  }
+
+  function pintarCalendario(sesiones, porDia) {
+    const lista = $('agenda-lista');
+    const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
+    const fin = new Date(hoy); fin.setDate(fin.getDate() + DIAS_FUENTE - 1);
+    const inicio = new Date(hoy); inicio.setDate(inicio.getDate() - ((inicio.getDay() + 6) % 7));
+    const ultimo = new Date(fin); ultimo.setDate(ultimo.getDate() + (6 - ((ultimo.getDay() + 6) % 7)));
+
+    if (!agendaDiaSel || !porDia.has(agendaDiaSel)) {
+      agendaDiaSel = [...porDia.keys()].find((k) => {
+        const [d, m, a] = k.split('/').map(Number);
+        return new Date(a, m - 1, d) >= hoy;
+      }) || claveDia(hoy);
+    }
+
+    const celdas = [];
+    for (let d = new Date(inicio); d <= ultimo; d.setDate(d.getDate() + 1)) {
+      const k = claveDia(d);
+      const evs = porDia.get(k) || [];
+      const fuera = d < hoy || d > fin;
+      const clases = ['cal-dia', fuera ? 'is-fuera' : '', +d === +hoy ? 'is-hoy' : '',
+        k === agendaDiaSel ? 'is-sel' : '', evs.length ? 'has-evs' : ''].filter(Boolean).join(' ');
+      const num = d.getDate() === 1 || +d === +inicio
+        ? d.toLocaleDateString('es-PE', { day: 'numeric', month: 'short' }) : d.getDate();
+      const chips = evs.slice(0, 3).map((s) =>
+        `<span class="cal-ev ${claseCamara(s.camara)}" title="${esc(`${s.hora} · ${s.tema}`)}"><b>${esc(s.hora)}</b> ${esc(s.tema)}</span>`).join('');
+      const mas = evs.length > 3 ? `<span class="cal-mas">+${evs.length - 3} más</span>` : '';
+      celdas.push(`<button class="${clases}" data-dia="${k}" ${fuera && !evs.length ? 'tabindex="-1"' : ''}
+        aria-label="${esc(d.toLocaleDateString('es-PE', { weekday: 'long', day: 'numeric', month: 'long' }))}: ${evs.length} actividades">
+        <span class="cal-num">${esc(String(num))}</span>${chips}${mas}</button>`);
+    }
+
+    const selEvs = porDia.get(agendaDiaSel);
+    const detalle = selEvs
+      ? htmlDias(new Map([[agendaDiaSel, selEvs]]))
+      : `<div class="d-card">${vacio('Sin actividades este día', sesiones.length
+        ? 'Elige un día con actividades en el calendario.' : 'La agenda oficial no tiene eventos en los próximos 14 días.')}</div>`;
+
+    lista.innerHTML = `
+      <div class="cal-leyenda">
+        <span><i class="cam-senado"></i>Senado</span><span><i class="cam-diputados"></i>Diputados</span>
+        <span><i class="cam-comision"></i>Comisiones</span><span><i class="cam-congreso"></i>Congreso / Pleno</span>
+        <span class="cal-leyenda-nota">Los días apagados están fuera de los 14 días que publica la fuente.</span>
+      </div>
+      <div class="cal" role="grid">
+        ${['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'].map((n) => `<div class="cal-cab">${n}</div>`).join('')}
+        ${celdas.join('')}
+      </div>
+      <div class="cal-detalle">${detalle}</div>`;
+    lista.querySelectorAll('.cal-dia').forEach((b) => b.addEventListener('click', () => {
+      agendaDiaSel = b.dataset.dia;
+      pintarAgenda();
+      lista.querySelector('.cal-detalle')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }));
+  }
+
+  function elegirVista(v) {
+    agendaVista = v;
+    try { localStorage.setItem('diana_agenda_vista', v); } catch { /* */ }
+    document.querySelectorAll('#agenda-vista .seg-btn').forEach((x) => x.classList.toggle('is-on', x.dataset.vista === v));
+    if (agendaDatos) pintarAgenda();
+  }
+  document.querySelectorAll('#agenda-vista .seg-btn').forEach((b) => b.addEventListener('click', () => elegirVista(b.dataset.vista)));
+  elegirVista(agendaVista);
   alEntrar.agenda = () => cargarAgenda();
   $('agenda-recargar').addEventListener('click', () => cargarAgenda(true));
   $('agenda-filtro').addEventListener('input', () => agendaDatos && pintarAgenda());
