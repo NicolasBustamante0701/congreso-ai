@@ -37,7 +37,12 @@ Reglas base para todo lo que sigue:
 
 ### AVANCE EN EL TRÁMITE
 
-`Presentado → Enviado a Comisiones → En Comisiones → Debate en Pleno → Enviado al Ejecutivo → Ley Publicada`
+La barra depende del periodo del expediente:
+
+- Periodo 2021-2026 (Congreso unicameral, números como `14864/2025-CR`):
+  `Presentado → Enviado a Comisiones → En Comisiones → Debate en Pleno → Enviado al Ejecutivo → Ley Publicada`
+- Periodo 2026-2031 (bicameral, números terminados en `-CD` o `-S`), cámara de origen primero:
+  `Presentado → En Comisiones → Pleno de [cámara de origen] → Cámara revisora (comisión y Pleno) → Enviado al Ejecutivo → Ley Publicada`
 
 **Etapa actual: [inferir de campo estado]** — [una línea explicando qué significa en la práctica: si está en comisiones, cuánto falta para el pleno; si está dormido, decirlo]
 

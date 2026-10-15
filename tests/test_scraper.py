@@ -2,12 +2,14 @@
 Tests de funciones puras del scraper — sin red, sin VCR.
 """
 from datetime import date
+from pathlib import Path
 
 import pytest
 
 from scraper import (
     _contar_items_agenda,
     _detectar_camara,
+    _parsear_agenda_dia,
     _periodos_de_numero,
     estado_legislativo,
     estado_legislativo_texto,
@@ -152,6 +154,55 @@ def test_contar_items_agenda_reinicia_por_subseccion():
     assert subs[0]["asuntos"] == 2
     assert subs[1]["asuntos"] == 3  # "5." no es correlativo
     assert estructura[0]["asuntos"] == 5
+
+
+def test_contar_items_agenda_asunto_unico_sin_numerar():
+    # Agenda de Diputados del 06/10/2026: un solo dictamen y una sola moción
+    # de interpelación, sin "1.". Sin texto en el cuerpo no se cuenta nada.
+    estructura = [
+        {"seccion": "Dictamen"},
+        {"seccion": "Mociones de orden del día", "subsecciones": [
+            {"seccion": "Moción de interpelación"},
+            {"seccion": "Comisiones especiales"},
+        ]},
+        {"seccion": "Informes finales"},
+    ]
+    texto = "\n".join([
+        "DICTAMEN", "Proyecto de Ley 98. Se propone delegar en el Poder Ejecutivo...",
+        "MOCIONES DE ORDEN DEL DÍA", "MOCIÓN DE INTERPELACIÓN",
+        "Moción 424, de los diputados Huilca Flores, Colchado Huamani...",
+        "COMISIONES ESPECIALES", "1.", "Moción 10 de los diputados ...", "2.",
+        "INFORMES FINALES",
+    ])
+    _contar_items_agenda(texto, estructura)
+    assert estructura[0]["asuntos"] == 1
+    subs = estructura[1]["subsecciones"]
+    assert subs[0]["asuntos"] == 1
+    assert subs[1]["asuntos"] == 2
+    assert estructura[1]["asuntos"] == 3
+    assert "asuntos" not in estructura[2]
+
+
+def test_parsear_agenda_tema_de_tres_lineas():
+    # 15/10/2026: la sesión de Constitución del Senado tiene un tema de tres
+    # líneas. Con el tope de 2 líneas salía sin cámara ni lugar, y Diana
+    # decía que el Senado no tenía sesiones de comisión ese día.
+    html = (Path(__file__).parent / "fixtures" / "agenda-comunicaciones-2026-10-15.html").read_text()
+    sesiones, avisos = _parsear_agenda_dia(html, date(2026, 10, 15), "https://x/")
+    assert len(sesiones) == 10
+    constitucion = next(s for s in sesiones if "Constitución" in s["tema"])
+    assert constitucion["camara"] == "Senado"
+    assert constitucion["es_comision"]
+    assert constitucion["hora"] == "11:00 AM"
+    assert constitucion["lugar"] == "Palacio Legislativo. Sala Miguel Grau Seminario"
+    assert "00132026-2031-S" in constitucion["tema"]
+    assert constitucion["documento"].endswith("COMISION-CONSTITUCION-Y-RREE-151026.pdf")
+    # Ninguna sesión arrastra "Descargar" ni texto del pie de página.
+    for s in sesiones:
+        assert "Descargar" not in s["tema"] + s["lugar"]
+        assert s["organiza"] and s["lugar"]
+    assert [a["aviso"] for a in avisos] == [
+        "Semana de Representación Del lunes 12 al viernes 16 de octubre de 2026."]
 
 
 @pytest.mark.parametrize("texto,codigo", [

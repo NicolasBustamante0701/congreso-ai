@@ -129,6 +129,11 @@ ninguno, omite esta sección completa, no la dejes vacía.]
 cámaras, y solo sesiones desde hoy ({hoy}) hacia adelante. Si no hay datos,
 escribe literalmente: "No hay sesiones programadas para los próximos días."
 NUNCA inventes números de proyectos, fechas, comisiones ni sesiones.
+Cada línea lleva la cámara entre paréntesis — el campo `camara` de la sesión
+(Senado / Cámara de Diputados). Las sesiones de comisión (`es_comision=true`)
+van primero y con el nombre de la comisión; las mesas de trabajo, eventos e
+iluminaciones de despachos individuales van al final, en una sola línea
+"Otras actividades:", no mezcladas con las sesiones.
 
 ## Puntos de atención
 [Temas que requieren seguimiento la próxima semana, derivados de las

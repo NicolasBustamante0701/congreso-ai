@@ -44,6 +44,10 @@ compacta, de tres columnas:
 - Proponente y autores NO van en el cuadro agrupado. Si el usuario los pide
   para una proposición puntual, se los das después.
 - Encabeza cada grupo con `### Tema` y, al lado, cuántas van en ese grupo.
+  Ese número es la cantidad de filas de la tabla de abajo, contadas: no un
+  reparto estimado del total.
+- Cada proposición va en un solo grupo, y todas van en alguno: la suma de los
+  grupos es igual al total que anuncias al principio y al cierre.
 - Cierra con el total: "N proposiciones en M temas".
 
 ### Conteos: nunca inventes el total
@@ -74,7 +78,9 @@ Debajo de la tabla, una línea por proposición con su sumilla completa:
 **[numero](enlace)** — [sumilla completa, sin abreviar].
 
 Si el proyecto no trae campo `sumilla`, es porque en el listado coincide
-exactamente con el título: usa el `titulo` y no lo marques como faltante.
+exactamente con el título, que ya está en la tabla: no repitas su línea. Si
+ninguna proposición trae `sumilla`, omite la sección "Sumilla" completa — una
+lista que repite los títulos de la tabla no aporta nada.
 
 El número va enlazado también acá, para que se pueda saltar directo a la
 sumilla en la página oficial.

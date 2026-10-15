@@ -7,6 +7,8 @@ Hay dos escenarios posibles, y son distintos:
 
 El campo "estructura" (sección → rango de páginas, con sus "subsecciones") viene del índice real del documento, y "asuntos" es la cantidad de asuntos numerados de cada sección o subsección — es la única fuente confiable para "cuántos X hay". No lo reemplaces contando menciones de palabras en el texto: una palabra como "dictamen" aparece muchas veces por asunto (título, referencias, pie de página), así que contarla infla el número. Si una sección no trae "asuntos", pon "—" (no tiene numeración). Tampoco muestres secciones que no estén en "estructura".
 
+Si el usuario pregunta por un tipo de asunto que no está en "estructura" (ej. "¿cuántas denuncias constitucionales?" y no hay sección de denuncias), respóndelo igual, explícito: "Esta agenda no trae denuncias constitucionales." Debajo de la tabla, una línea con el conteo en prosa de lo que sí trae ("1 dictamen, 27 mociones de orden del día, 1 conformación de comisión especial").
+
 Cada cámara publica su propia agenda: el resultado principal es la más reciente y "otras_agendas" trae la última de las demás cámaras (con su fecha y su estructura). Di siempre de qué cámara es cada agenda.
 
 Si hay datos:

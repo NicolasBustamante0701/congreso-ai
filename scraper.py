@@ -1999,14 +1999,20 @@ def _contar_items_agenda(texto: str, estructura: list) -> None:
     Agrega a cada sección de `estructura` cuántos asuntos numerados (1., 2.,
     ...) tiene en el cuerpo. Solo cuenta numeraciones correlativas que
     arrancan en 1 después del título de la sección, así que el pie de página
-    o un "1." suelto no suman. Si una sección no tiene numeración (un único
-    dictamen, por ejemplo), queda sin el campo: mejor nada que un número falso.
+    o un "1." suelto no suman.
+
+    La Relatoría solo numera cuando hay dos asuntos o más: una sección sin
+    subsecciones que aparece en el cuerpo con texto pero sin numeración tiene
+    un asunto (agenda de Diputados del 06/10/2026: "Dictamen" con el PL 98,
+    "Moción de interpelación" con la 424). Antes quedaban sin el campo y la
+    respuesta a "¿cuántos dictámenes?" era "—".
     """
     nombres = {}
     for e in estructura:
         nombres[_sin_acentos(e["seccion"]).strip()] = (e, None)
         for sub in e.get("subsecciones", []):
             nombres[_sin_acentos(sub["seccion"]).strip()] = (sub, e)
+    con_texto = set()   # id() de las secciones con cuerpo en el documento
     actual = padre = None
     ultimo = 0
     for linea in texto.split("\n"):
@@ -2015,12 +2021,20 @@ def _contar_items_agenda(texto: str, estructura: list) -> None:
             # La numeración reinicia en cada sección y subsección.
             (actual, padre), ultimo = nombres[limpia], 0
             continue
+        if actual is not None and len(limpia) > 20:
+            con_texto.add(id(actual))
         m = re.match(r"^(\d{1,3})\.(\s|$)", limpia)
         if actual is not None and m and int(m.group(1)) == ultimo + 1:
             ultimo += 1
             actual["asuntos"] = ultimo
-            if padre is not None:
-                padre["asuntos"] = padre.get("asuntos", 0) + 1
+
+    for e in estructura:
+        subs = e.get("subsecciones", [])
+        for sec in subs or [e]:
+            if "asuntos" not in sec and id(sec) in con_texto:
+                sec["asuntos"] = 1
+        if subs and any("asuntos" in sub for sub in subs):
+            e["asuntos"] = sum(sub.get("asuntos", 0) for sub in subs)
 
 
 def _armar_agenda(fuente: str, titulo: str, enlace: str, texto: str,
@@ -2455,103 +2469,23 @@ async def fetch_agenda_camaras(dias: int = 2, camara: str = None):
     today = ahora_lima().date()
 
     async def _un_dia(c, dia):
-        sesiones_dia = []
         url = f"{AGENDA_COMUNICACIONES}/{dia.year}/{dia.month}/{dia.day}/"
         try:
             r = await c.get(url, headers=HEADERS)
             # WordPress puede devolver 404 con contenido válido — no saltarse
             if not r.text or len(r.text) < 500:
-                return sesiones_dia
-            soup = BeautifulSoup(r.text, "html.parser")
-            texto = soup.get_text(separator="\n", strip=True)
-            lineas = [l.strip() for l in texto.split("\n") if l.strip()]
-
-            # Estructura real observada en la página (verificado en varios
-            # días): HORA / hh:mm / AM|PM / TEMA / línea 1 / línea 2
-            # (opcional, ej. "Primera Legislatura Ordinaria...") / "Descargar"
-            # (botón, no es dato) / ORGANIZA / texto / LUGAR / línea 1 / línea 2.
-            # El TEMA puede ocupar 2 líneas y el botón "Descargar" queda
-            # metido justo antes de ORGANIZA — un parser que asuma "1 línea
-            # por campo" descuadra todo lo que sigue y termina metiendo
-            # "Descargar" como si fuera el lugar (bug real, visto en
-            # producción). Por eso acá cada campo se recolecta hasta el
-            # próximo header conocido (no por conteo fijo de líneas), y se
-            # descarta explícitamente "Descargar" por ser ruido de UI.
-            SKIP = {"HORA", "TEMA", "ORGANIZA", "LUGAR"}
-            # "Descargar" es el botón de descarga que queda metido en medio
-            # del texto (ver arriba). El resto son navegación del pie de
-            # página del sitio — solo aparecen pegados al lugar de la ÚLTIMA
-            # sesión del día, que no tiene otro header después para frenar
-            # la recolección (visto en producción: "Portal" se colaba ahí).
-            RUIDO = {"Descargar", "Portal", "Inicio", "Noticias"}
-            # Tope real observado: tema ocupa hasta 2 líneas, organiza 1,
-            # lugar hasta 2. Con 2 alcanza para todo lo real y corta antes
-            # de llegar al pie de página en la última sesión del día.
-            MAX_LINEAS_CAMPO = 2
-
-            def _recolectar(j):
-                partes = []
-                vistas = 0  # cuenta TODAS las líneas revisadas, no solo
-                # las que se guardan — si contara solo las guardadas, al
-                # llegar al tope el corte queda justo ANTES de una línea
-                # de ruido en vez de después, y esa línea (ej. "Descargar")
-                # nunca se saltea, descuadrando el header que sigue.
-                while (j < len(lineas) and lineas[j] not in SKIP
-                       and not re.match(r"^\d{1,2}:\d{2}$", lineas[j])
-                       and vistas < MAX_LINEAS_CAMPO):
-                    if lineas[j] not in RUIDO:
-                        partes.append(lineas[j])
-                    vistas += 1
-                    j += 1
-                # Por si el tope cortó justo sobre una línea de ruido:
-                # saltarla también para no descuadrar el próximo header.
-                while j < len(lineas) and lineas[j] in RUIDO:
-                    j += 1
-                return " ".join(partes), j
-
-            i = 0
-            while i < len(lineas):
-                if re.match(r"^\d{1,2}:\d{2}$", lineas[i]):
-                    hora = lineas[i]
-                    j = i + 1
-                    # AM/PM opcional en la siguiente línea
-                    if j < len(lineas) and lineas[j].upper() in ("AM", "PM"):
-                        hora = f"{hora} {lineas[j]}"
-                        j += 1
-
-                    tema = organiza = lugar = ""
-                    if j < len(lineas) and lineas[j] == "TEMA":
-                        j += 1
-                        tema, j = _recolectar(j)
-                    if j < len(lineas) and lineas[j] == "ORGANIZA":
-                        j += 1
-                        organiza, j = _recolectar(j)
-                    if j < len(lineas) and lineas[j] == "LUGAR":
-                        j += 1
-                        lugar, j = _recolectar(j)
-
-                    sesiones_dia.append({
-                        "fecha": dia.strftime("%d/%m/%Y"),
-                        "hora": hora,
-                        "tema": tema,
-                        "organiza": organiza,
-                        "lugar": lugar,
-                        "camara": _detectar_camara(tema + " " + organiza + " " + lugar),
-                        "es_comision": _es_de_comision(tema + " " + organiza),
-                        "enlace": url,
-                    })
-                    i = j
-                else:
-                    i += 1
+                return [], []
+            return _parsear_agenda_dia(r.text, dia, url)
         except Exception as _e:
             logger.debug("sesiones day parse failed: %s", _e)
-        return sesiones_dia
+            return [], []
 
     async with _client() as c:
         resultados = await asyncio.gather(
             *[_un_dia(c, today + timedelta(days=delta)) for delta in range(dias)]
         )
-    sesiones_total = [s for dia_lista in resultados for s in dia_lista]
+    sesiones_total = [s for sesiones_dia, _ in resultados for s in sesiones_dia]
+    avisos = [a for _, avisos_dia in resultados for a in avisos_dia]
 
     if camara:
         # Sin acentos: "comision" no matcheaba "Comisión" y el filtro de
@@ -2560,22 +2494,137 @@ async def fetch_agenda_camaras(dias: int = 2, camara: str = None):
         if pedido.startswith("COMISI"):
             sesiones_total = [s for s in sesiones_total if s["es_comision"]]
         else:
+            # El tema solo cuenta si la cámara no se pudo detectar: la
+            # Comisión de Constitución del Senado debatía una propuesta
+            # "remitida por la Cámara de Diputados" y salía en Diputados.
             sesiones_total = [s for s in sesiones_total
                               if pedido in _sin_acentos(s["camara"])
-                              or pedido in _sin_acentos(s["tema"])]
+                              or (s["camara"] not in ("Senado", "Cámara de Diputados")
+                                  and pedido in _sin_acentos(s["tema"]))]
 
     if not sesiones_total:
-        return {
+        vacio = {
             "sin_datos": True,
             "mensaje": f"No hay sesiones programadas en los próximos {dias} días"
                        + (f" para '{camara}'" if camara else "") + ".",
         }
+        if avisos:
+            vacio["avisos"] = avisos
+        return vacio
 
-    return {
+    resultado = {
         "fuente": f"comunicaciones.congreso.gob.pe/agenda — {dias} días",
         "sesiones": sesiones_total,
         "total": len(sesiones_total),
     }
+    if avisos:
+        resultado["avisos"] = avisos
+    return resultado
+
+
+# Encabezados de cada actividad en la agenda de comunicaciones.
+_AGENDA_HEADERS = {"HORA", "TEMA", "ORGANIZA", "LUGAR"}
+# "Descargar" es el botón con el PDF de la actividad (la agenda de la sesión
+# de comisión, el oficio). El resto es navegación del pie de página, que solo
+# aparece pegada al lugar de la ÚLTIMA actividad del día.
+_AGENDA_RUIDO = {"Descargar", "Portal", "Inicio", "Noticias"}
+# Líneas que puede ocupar cada campo. El tema llega a 3 (título, "(Continuación
+# de la Primera Sesión No Ordinaria)" y el asunto a votar, visto el
+# 15/10/2026): con el tope fijo de 2 el parser quedaba parado en la tercera,
+# no encontraba ORGANIZA ni LUGAR y la sesión de Constitución del Senado salía
+# sin cámara, sin lugar y fuera del filtro "senado". El lugar sí se corta en
+# 2 porque en la última actividad del día lo sigue el pie de página.
+_AGENDA_TOPE = {"TEMA": 6, "ORGANIZA": 4, "LUGAR": 2}
+_HORA_RE = re.compile(r"^\d{1,2}:\d{2}$")
+
+
+def _parsear_agenda_dia(html: str, dia: date, url: str) -> tuple[list[dict], list[dict]]:
+    """
+    Actividades de un día de comunicaciones.congreso.gob.pe/agenda.
+
+    Estructura de la página: HORA / hh:mm / AM|PM / TEMA / 1-3 líneas /
+    [Descargar] / ORGANIZA / 1-2 líneas / LUGAR / 1-2 líneas. Cada campo se
+    recolecta hasta el próximo encabezado. Los bloques sin hora ("Semana de
+    Representación — del lunes 12 al viernes 16") son avisos, no sesiones:
+    explican por qué un día no tiene sesiones de comisión.
+
+    Devuelve (sesiones, avisos).
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    # Los PDFs de "Descargar", en el mismo orden en que aparece el texto.
+    descargas = iter([a.get("href") for a in soup.find_all("a")
+                      if a.get_text(strip=True) == "Descargar"])
+    texto = soup.get_text(separator="\n", strip=True)
+    lineas = [l.strip() for l in texto.split("\n") if l.strip()]
+
+    def _recolectar(j, campo):
+        partes, documento, vistas = [], None, 0
+        while (j < len(lineas) and lineas[j] not in _AGENDA_HEADERS
+               and not _HORA_RE.match(lineas[j]) and vistas < _AGENDA_TOPE[campo]):
+            if lineas[j] == "Descargar":
+                documento = next(descargas, None)
+            elif lineas[j] not in _AGENDA_RUIDO:
+                partes.append(lineas[j])
+            vistas += 1
+            j += 1
+        while j < len(lineas) and lineas[j] in _AGENDA_RUIDO:
+            if lineas[j] == "Descargar":
+                documento = next(descargas, None)
+            j += 1
+        return " ".join(partes), documento, j
+
+    sesiones, avisos = [], []
+    i = 0
+    while i < len(lineas):
+        hora = ""
+        if _HORA_RE.match(lineas[i]):
+            hora = lineas[i]
+            j = i + 1
+            if j < len(lineas) and lineas[j].upper() in ("AM", "PM"):
+                hora = f"{hora} {lineas[j]}"
+                j += 1
+        elif lineas[i] == "HORA" and i + 1 < len(lineas) and lineas[i + 1] == "TEMA":
+            j = i + 1   # bloque sin hora: aviso
+        else:
+            i += 1
+            continue
+
+        campos = {"TEMA": "", "ORGANIZA": "", "LUGAR": ""}
+        documento = None
+        for campo in campos:
+            if j < len(lineas) and lineas[j] == campo:
+                campos[campo], doc, j = _recolectar(j + 1, campo)
+                documento = documento or doc
+        tema, organiza, lugar = campos["TEMA"], campos["ORGANIZA"], campos["LUGAR"]
+
+        if not hora:
+            if tema:
+                avisos.append({"fecha": dia.strftime("%d/%m/%Y"), "aviso": tema,
+                               **({"documento": documento} if documento else {})})
+            i = max(j, i + 1)
+            continue
+
+        # La cámara sale primero de quien organiza ("Presidente: Senador
+        # Carlos Mesía"): el tema puede nombrar a la otra cámara ("remitida
+        # por la Cámara de Diputados") y confundir la detección.
+        camara = _detectar_camara(organiza)
+        if camara not in ("Senado", "Cámara de Diputados"):
+            camara = _detectar_camara(tema + " " + organiza + " " + lugar)
+        sesion = {
+            "fecha": dia.strftime("%d/%m/%Y"),
+            "hora": hora,
+            "tema": tema,
+            "organiza": organiza,
+            "lugar": lugar,
+            "camara": camara,
+            "es_comision": _es_de_comision(tema + " " + organiza),
+            "enlace": url,
+        }
+        if documento:
+            sesion["documento"] = documento
+        sesiones.append(sesion)
+        i = j
+    return sesiones, avisos
 
 
 def _es_de_comision(texto: str) -> bool:

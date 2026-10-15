@@ -69,4 +69,9 @@ async def vigilar_desconexion(request, gen, ping_cada: float = 5.0):
                 await pendiente
             except BaseException:
                 pass
+        elif pendiente is not None and not pendiente.cancelled():
+            # Terminó (StopAsyncIteration) mientras se esperaba el ping:
+            # sin leer la excepción, asyncio la loguea como "Task exception
+            # was never retrieved" (visto el 15/10/2026 en un expediente).
+            pendiente.exception()
         await gen.aclose()

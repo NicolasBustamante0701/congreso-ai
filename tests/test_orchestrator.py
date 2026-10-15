@@ -13,10 +13,15 @@ import pytest
 
 from services.orchestrator import (
     DEFAULT_DIAS_PROYECTOS,
+    MAX_FILAS_AGRUPADO,
+    MAX_FILAS_LISTADO,
     RESUMEN_DIAS,
     RESUMEN_TOOLS,
     ChatOrchestrator,
+    _compactar_para_agrupado,
+    _cuadro_por_temas,
     _detecta_proyectos_por_dias,
+    _parsear_clasificacion,
 )
 from services.prompt_registry import SYSTEM_MINI, resumen_con_fechas
 
@@ -276,7 +281,8 @@ async def test_run_fuerza_buscar_proyectos_sin_pasar_por_router():
 
     assert events
     assert orch.tools_usados == ["buscar_proyectos"]
-    mock_run_tool.assert_awaited_once_with("buscar_proyectos", {"dias": 15})
+    mock_run_tool.assert_awaited_once_with(
+        "buscar_proyectos", {"dias": 15, "limit": MAX_FILAS_AGRUPADO})
 
 
 async def test_proyectos_por_dias_conserva_el_tema_que_elige_el_router():
@@ -655,3 +661,98 @@ def test_quita_razonamiento_filtrado():
     assert "El usuario" not in limpio
     normal = "## Agenda\n| a | b |"
     assert _quitar_razonamiento(normal) == normal
+
+
+def test_cuadro_por_temas_pide_el_lote_entero():
+    # 15/10/2026: el router pidió limit=100 con 134 proposiciones en 15 días y
+    # el cuadro por temas mostró 91 filas con encabezados que sumaban 134.
+    orch = make([user("Revisa los proyectos de ley de los últimos 15 días calendario, "
+                      "y entrégame un cuadro resumen dividido por temas")])
+    args = orch._ajustar_args("buscar_proyectos", {"limit": 100, "dias": 15})
+    assert args["limit"] == MAX_FILAS_AGRUPADO
+    assert orch.proyectos_agrupados
+
+
+def test_listado_suelto_sigue_acotado():
+    orch = make([user("novedades de proyectos de ley en diputados")])
+    args = orch._ajustar_args("buscar_proyectos", {"limit": 100})
+    assert args["limit"] == MAX_FILAS_LISTADO
+    assert not orch.proyectos_agrupados
+
+
+def test_compactar_para_agrupado_deja_solo_las_columnas_del_cuadro():
+    resultado = {"total": 1, "items": [{
+        "numero": "00588-2026-2031-CD", "fecha_presentacion": "15/10/2026",
+        "titulo": "T", "camara": "Diputados", "enlace": "https://e",
+        "autor": "A; B; C", "autores_restantes": 5, "proponente": "Cámara de Diputados",
+    }]}
+    compacto = _compactar_para_agrupado(resultado)
+    assert compacto["total"] == 1
+    assert compacto["items"] == [{"numero": "00588-2026-2031-CD", "fecha_presentacion": "15/10/2026",
+                                  "titulo": "T", "camara": "Diputados", "enlace": "https://e"}]
+
+
+def test_parsear_clasificacion_corrige_lo_que_el_modelo_pierde():
+    numeros = ["001-CD", "002-CD", "003-CD", "004-CD"]
+    texto = """```json
+    {"grupos": [
+      {"tema": "Seguridad", "numeros": ["001-CD", "002-CD", "999-CD"]},
+      {"tema": "Salud", "numeros": ["002-CD", "003-CD"]},
+      {"tema": "Vacío", "numeros": []}
+    ], "lectura": "Predomina seguridad."}
+    ```"""
+    grupos, lectura = _parsear_clasificacion(texto, numeros)
+    # 999 no existe, 002 va una sola vez, 004 quedó sin tema y va a "Otros".
+    assert grupos == [("Seguridad", ["001-CD", "002-CD"]), ("Salud", ["003-CD"]),
+                      ("Otros", ["004-CD"])]
+    assert lectura == "Predomina seguridad."
+    assert _parsear_clasificacion("no hay json", numeros) is None
+
+
+def test_cuadro_por_temas_cuenta_lo_que_muestra():
+    items = [{"numero": f"00{i}-CD", "fecha_presentacion": "15/10/2026",
+              "titulo": f"Título | {i}", "enlace": f"https://e/{i}"} for i in range(1, 4)]
+    md = _cuadro_por_temas(items, [("A", ["001-CD", "002-CD"]), ("B", ["003-CD"])], "Lectura.")
+    assert "### A (2)" in md and "### B (1)" in md
+    assert md.count("| [00") == 3
+    assert "Título / 1" in md  # el "|" del título no rompe la tabla
+    assert "**3 proposiciones en 2 temas.**" in md
+    assert "### Mi lectura\nLectura." in md
+
+
+@pytest.mark.asyncio
+async def test_cuadro_por_temas_lo_arma_el_codigo():
+    orch = make([user("proyectos de los últimos 15 días en un cuadro dividido por temas")])
+    orch.proyectos_agrupados = True
+    orch.proyectos_items = [{"numero": f"{i:05d}-2026-2031-CD", "titulo": f"T{i}",
+                             "fecha_presentacion": "15/10/2026", "enlace": f"https://e/{i}"}
+                            for i in range(20)]
+    respuesta = json.dumps({"grupos": [{"tema": "Todo", "numeros": [
+        p["numero"] for p in orch.proyectos_items]}], "lectura": "L."})
+
+    async def fake_stream(*a, **k):
+        yield ("text", respuesta)
+
+    assert orch._toca_cuadro_por_temas()
+    with patch("services.orchestrator.llm.stream", fake_stream):
+        md = await orch._armar_cuadro_por_temas()
+    assert "### Todo (20)" in md
+    assert "**20 proposiciones en 1 tema.**" in md
+
+
+def test_desenlaza_link_con_dominio_mal_escrito():
+    from services.orchestrator import _desenlazar, _links_permitidos
+    bueno = "https://wb2server.congreso.gob.pe/spley-portal/#/diputados/expediente/2026/559"
+    permitidos = _links_permitidos(bueno)
+    texto = ("PL 559 [(Ver fuente)](https://wb2server.congrosgob.pe/spley-portal/#/diputados/expediente/2026/559)"
+             f" — [Ver fuente oficial]({bueno})\n")
+    assert _desenlazar(texto, permitidos) == f"PL 559 (Ver fuente) — [Ver fuente oficial]({bueno})\n"
+
+
+def test_citas_reconoce_sufijos_de_una_letra():
+    from services.orchestrator import _citas_no_verificadas
+    fuentes = "00013-2026-2031-S ... (Proposición Legislativa N° 00098-2026-2031-d)."
+    nums, _ = _citas_no_verificadas("PL 00013-2026-2031-S y 00098-2026-2031-CD", fuentes)
+    assert nums == []
+    nums, _ = _citas_no_verificadas("PL 00099-2026-2031-CD", fuentes)
+    assert nums == ["00099-2026-2031-CD"]

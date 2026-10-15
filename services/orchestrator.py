@@ -77,6 +77,91 @@ _DESCARTABLES = ("todos_los_adjuntos",)
 _LISTAS_CRONOLOGICAS = ("seguimiento",)
 
 
+def _compactar_para_agrupado(resultado):
+    """Deja en cada proposición solo las columnas del cuadro agrupado."""
+    if not isinstance(resultado, dict) or not isinstance(resultado.get("items"), list):
+        return resultado
+    items = [{k: p[k] for k in CAMPOS_AGRUPADO if p.get(k)} for p in resultado["items"]]
+    return {**resultado, "items": items}
+
+
+# "dividido por temas", "agrupado por materia": el cuadro lo arma el código.
+POR_TEMAS_RE = re.compile(r"\b(temas?|tem[aá]tic\w*|materias?)\b", re.IGNORECASE)
+
+PROMPT_CLASIFICAR = """Clasifica proposiciones legislativas del Congreso del Perú por tema.
+
+Recibes una lista "numero | titulo". Devuelve SOLO un objeto JSON, sin texto antes ni después:
+{"grupos": [{"tema": "Seguridad ciudadana y justicia", "numeros": ["00588-2026-2031-CD", ...]}, ...],
+ "lectura": "2-3 oraciones: qué temas concentran la producción y qué patrón se ve."}
+
+Reglas:
+- Entre 4 y 8 temas, con nombres cortos y concretos.
+- Cada número va en UN solo tema, y todos los números de la lista van en alguno.
+- Copia los números exactamente como vienen.
+- "lectura" se basa solo en los títulos; no inventes autores, fechas ni resultados."""
+
+
+def _parsear_clasificacion(texto: str, numeros: list[str]) -> tuple[list[tuple[str, list[str]]], str] | None:
+    """
+    Grupos (tema, números) validados contra la lista real: cada número una
+    sola vez, los que el modelo inventó afuera y los que olvidó en "Otros".
+    None si la respuesta no es un JSON con grupos.
+    """
+    m = re.search(r"\{.*\}", texto, re.DOTALL)
+    if not m:
+        return None
+    try:
+        datos = json.loads(m.group(0))
+        grupos_crudos = datos["grupos"]
+    except (ValueError, KeyError, TypeError):
+        return None
+    validos = set(numeros)
+    vistos: set[str] = set()
+    grupos: list[tuple[str, list[str]]] = []
+    for g in grupos_crudos if isinstance(grupos_crudos, list) else []:
+        if not isinstance(g, dict):
+            continue
+        tema = str(g.get("tema") or "").strip()
+        suyos = [n for n in (g.get("numeros") or [])
+                 if isinstance(n, str) and n in validos and n not in vistos]
+        if not tema or not suyos:
+            continue
+        vistos.update(suyos)
+        grupos.append((tema, suyos))
+    if not grupos:
+        return None
+    faltan = [n for n in numeros if n not in vistos]
+    if faltan:
+        grupos.append(("Otros", faltan))
+    return grupos, str(datos.get("lectura") or "").strip()
+
+
+def _cuadro_por_temas(items: list[dict], grupos: list[tuple[str, list[str]]],
+                      lectura: str, total_disponible: int | None = None) -> str:
+    """Markdown del cuadro agrupado (formato de workflow_proyectos.md)."""
+    por_numero = {p["numero"]: p for p in items}
+    total = len(items)
+    temas = f"{len(grupos)} tema" + ("s" if len(grupos) != 1 else "")
+    partes = [f"Hay {total} proposiciones legislativas en el periodo consultado. "
+              f"Te las muestro todas, agrupadas en {temas}:\n"]
+    if total_disponible and total_disponible > total:
+        partes = [f"Hay {total_disponible} proposiciones en el periodo; te muestro "
+                  f"{total}, agrupadas en {temas}:\n"]
+    for tema, nums in grupos:
+        partes.append(f"### {tema} ({len(nums)})\n")
+        partes.append("| Nº | FECHA | TÍTULO |\n|---|---|---|")
+        for n in nums:
+            p = por_numero[n]
+            titulo = " ".join(str(p.get("titulo") or "").replace("|", "/").split())
+            num = f"[{n}]({p['enlace']})" if p.get("enlace") else n
+            partes.append(f"| {num} | {p.get('fecha_presentacion') or '—'} | {titulo} |")
+        partes.append("")
+    partes.append(f"**{total} proposiciones en {temas}.**\n")
+    if lectura:
+        partes.append(f"### Mi lectura\n{lectura}\n")
+    return "\n".join(partes)
+
+
 def _recortar_resultado(nombre: str, resultado) -> str:
     """
     Serializa el resultado de una herramienta dentro del tope que le toca.
@@ -199,6 +284,15 @@ DEFAULT_DIAS_PROYECTOS = 15
 # llegaban 100, el modelo mostraba 10-15 y decía "te muestro las 100". Solo
 # cuando piden agrupar, contar o desglosar necesita el lote entero.
 MAX_FILAS_LISTADO = 15
+# Un cuadro agrupado necesita el lote entero. El router pedía limit=100 y en
+# 15 días había 134 (15/10/2026): los encabezados sumaban 134, las tablas
+# mostraban 91 y la nota decía "las primeras 100". El techo es de SPLEY, no
+# del cuadro: 500 cubre de sobra una quincena.
+MAX_FILAS_AGRUPADO = 500
+# Lo único que usa la tabla compacta del cuadro agrupado
+# (workflow_proyectos.md). Sin autores ni proponente, 134 proposiciones ocupan
+# ~45 mil caracteres en vez de 76 mil, y entran sin recortar filas.
+CAMPOS_AGRUPADO = ("numero", "fecha_presentacion", "titulo", "camara", "enlace")
 AGRUPADO_RE = re.compile(
     r"\b(agrup\w*|cuadro|temas|clasific\w*|desglos\w*|resumen|bancadas?|"
     r"cu[aá]nt[oa]s|cantidad|total|todos|todas)\b", re.IGNORECASE)
@@ -338,8 +432,17 @@ def _fix_nombres_reformateados(texto: str, nombres_normalizados: set[str]) -> st
 # al final nombrando exactamente qué no se pudo verificar.
 # El guion entre los dos años es opcional: el Congreso a veces publica
 # "00088-20262031-CD" y el modelo lo escribe bien, "00088-2026-2031-CD".
-NUM_PROYECTO_RE = re.compile(r"\b(\d{1,5})\s*[-/]\s*(\d{4})(?:\s*-?\s*\d{4})?\s*-\s*([A-Z]{2})\b")
-LINK_CONGRESO_RE = re.compile(r"https?://[^\s)\]>\"'`]*congreso\.gob\.pe[^\s)\]>\"'`]*")
+# Sufijo de 1 o 2 letras: "-S" es el del Senado, y la agenda del 15/10/2026
+# escribía "00098-2026-2031-d" para uno de Diputados. Con [A-Z]{2} esos no se
+# reconocían en las fuentes y la respuesta cerraba con un falso "no pude
+# verificar 00098-2026-2031-CD".
+NUM_PROYECTO_RE = re.compile(r"\b(\d{1,5})\s*[-/]\s*(\d{4})(?:\s*-?\s*\d{4})?\s*-\s*([A-Za-z]{1,2})\b")
+# "D" suelto es la Cámara de Diputados mal escrita: su sufijo es "CD".
+_SUFIJOS_EQUIVALENTES = {"D": "CD"}
+# El host solo tiene que parecerse al del Congreso ("congr"): un link con el
+# dominio mal escrito ("wb2server.congrosgob.pe", visto el 15/10/2026 en el
+# resumen semanal) no está en los datos y también se desenlaza.
+LINK_CONGRESO_RE = re.compile(r"https?://[^\s)\]>\"'`/]*congr[^\s)\]>\"'`]*")
 
 
 # Portales oficiales que el modelo puede sugerir aunque no vengan en los datos
@@ -357,7 +460,7 @@ PORTALES_OFICIALES = (
     "https://senado.congreso.gob.pe/",
 )
 
-_LINK_MD_CONGRESO_RE = re.compile(r"\[([^\]\n]+)\]\((https?://[^)\s]*congreso\.gob\.pe[^)\s]*)\)")
+_LINK_MD_CONGRESO_RE = re.compile(r"\[([^\]\n]+)\]\((https?://[^)\s/]*congr[^)\s]*)\)")
 
 
 def _norm_link(u: str) -> str:
@@ -435,7 +538,8 @@ def _quitar_razonamiento(texto: str) -> str:
 
 def _clave_proyecto(m: re.Match) -> tuple:
     # "00434-2026-2031-CD" y "434-2026-2031-CD" son el mismo proyecto.
-    return int(m.group(1)), m.group(2), m.group(3)
+    sufijo = m.group(3).upper()
+    return int(m.group(1)), m.group(2), _SUFIJOS_EQUIVALENTES.get(sufijo, sufijo)
 
 
 def _citas_no_verificadas(respuesta: str, fuentes: str) -> tuple[list[str], list[str]]:
@@ -468,6 +572,9 @@ class ChatOrchestrator:
         self.last_msg = ""
         self.is_resumen = False
         self.forzar_dias_proyectos: int | None = None
+        self.proyectos_agrupados = False
+        self.proyectos_items: list[dict] = []
+        self.proyectos_total: int | None = None
         self.sector = None
         self.analizar_documento = False
         self.has_sesion = False
@@ -818,6 +925,11 @@ class ChatOrchestrator:
 
         resultados = await asyncio.gather(*(una(n, a) for n, a in llamadas))
         for (name, _), result in zip(llamadas, resultados):
+            if name == "buscar_proyectos" and self.proyectos_agrupados:
+                result = _compactar_para_agrupado(result)
+                if isinstance(result, dict) and isinstance(result.get("items"), list):
+                    self.proyectos_items = result["items"]
+                    self.proyectos_total = result.get("total_disponible") or result.get("total")
             self.tool_msgs.append({
                 "role": "user",
                 "content": f"[Resultado de la herramienta {name}]\n"
@@ -831,7 +943,10 @@ class ChatOrchestrator:
         # El pedido decía "últimos N días": que el router no pierda la ventana.
         if self.forzar_dias_proyectos and "dias" not in args and "numero" not in args:
             args["dias"] = self.forzar_dias_proyectos
-        if not AGRUPADO_RE.search(self.last_msg):
+        if AGRUPADO_RE.search(self.last_msg):
+            args["limit"] = MAX_FILAS_AGRUPADO
+            self.proyectos_agrupados = True
+        else:
             args["limit"] = min(int(args.get("limit") or MAX_FILAS_LISTADO), MAX_FILAS_LISTADO)
         return args
 
@@ -940,6 +1055,10 @@ class ChatOrchestrator:
             # interno también descuenta de este presupuesto. Es un techo, no
             # un costo: solo se paga lo que se genera.
             chars = sum(len(m.get("content") or "") for m in self.tool_msgs)
+            if self.proyectos_agrupados and chars > 30000:
+                # Cuadro agrupado completo: 134 filas con link rondan 12 mil
+                # tokens, más el razonamiento interno de Gemini.
+                return 24000
             return 14000 if chars > 12000 else 8000
         return 2500
 
@@ -1125,5 +1244,50 @@ class ChatOrchestrator:
             + conv_p3[-1:]
         )
 
+        if self._toca_cuadro_por_temas():
+            yield sse.status(f"Clasificando {len(self.proyectos_items)} proposiciones por tema...")
+            cuadro = await self._armar_cuadro_por_temas()
+            if cuadro:
+                yield sse.text(cuadro)
+                yield sse.DONE
+                return
+
         async for ev in self._stream_final(msgs, self._phase3_max_tokens()):
             yield ev
+
+    def _toca_cuadro_por_temas(self) -> bool:
+        """
+        Cuadro de proposiciones "por temas" con más filas que un listado.
+
+        Con 134 proposiciones (15/10/2026) el modelo armaba las tablas él
+        mismo y perdía la cuenta: 4 sin poner, 1 repetida, encabezados que no
+        coincidían con sus filas. Ahora el modelo solo clasifica y el código
+        arma las tablas y los conteos.
+        """
+        return (self.proyectos_agrupados and not self.is_resumen
+                and len(self.proyectos_items) > MAX_FILAS_LISTADO
+                and bool(POR_TEMAS_RE.search(self.last_msg)))
+
+    async def _armar_cuadro_por_temas(self) -> str | None:
+        items = [p for p in self.proyectos_items if p.get("numero")]
+        numeros = [p["numero"] for p in items]
+        lista = "\n".join(f"{p['numero']} | {p.get('titulo') or ''}" for p in items)
+        msgs = [{"role": "system", "content": PROMPT_CLASIFICAR},
+                {"role": "user", "content": f"Pedido del usuario: {self.last_msg}\n\n{lista}"}]
+        texto = ""
+        try:
+            async for kind, payload in llm.stream(msgs, max_tokens=8000, temperature=0.1):
+                if kind == "text":
+                    texto += payload
+                elif kind == "error":
+                    logger.warning("clasificación por temas falló: %s", payload)
+                    return None
+        except Exception as e:
+            logger.warning("clasificación por temas falló: %s", e)
+            return None
+        clasificacion = _parsear_clasificacion(texto, numeros)
+        if clasificacion is None:
+            logger.warning("clasificación por temas sin JSON válido; se usa la respuesta libre")
+            return None
+        grupos, lectura = clasificacion
+        return _cuadro_por_temas(items, grupos, lectura, self.proyectos_total)
