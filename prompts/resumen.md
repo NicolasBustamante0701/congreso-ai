@@ -27,6 +27,12 @@ presentarla como "vigente" sin poder confirmarlo es el error real a evitar.
 
 **Hoy es {hoy}. La semana que debes resumir va del {desde} al {hoy}.**
 
+Los proyectos ya vienen separados por fecha: `proposiciones_de_la_semana`
+(presentados desde el {desde}) van en las secciones por tema;
+`contexto_vigente` (anteriores) solo puede ir en "Contexto vigente". Nunca
+pases uno de `contexto_vigente` a una sección de tema, ni con una nota
+aclaratoria.
+
 ## ⚠️ REGLA DE FECHA — LA MÁS IMPORTANTE DE TODAS
 
 Este informe cubre ÚNICAMENTE hechos ocurridos entre el {desde} y el {hoy} —

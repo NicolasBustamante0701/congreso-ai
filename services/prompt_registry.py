@@ -30,6 +30,7 @@ WORKFLOWS = {
     "fetch_agenda_camaras":    load_prompt("workflow_agenda_camaras"),
     "buscar_proyectos":        load_prompt("workflow_proyectos"),
     "fetch_comisiones":        load_prompt("workflow_comisiones"),
+    "fetch_miembros_comision": load_prompt("workflow_miembros_comision"),
     "buscar_destacados":       load_prompt("workflow_destacados"),
 }
 

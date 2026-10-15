@@ -22,6 +22,7 @@ from services.orchestrator import (
     _cuadro_por_temas,
     _detecta_proyectos_por_dias,
     _parsear_clasificacion,
+    _separar_por_semana,
 )
 from services.prompt_registry import SYSTEM_MINI, resumen_con_fechas
 
@@ -756,3 +757,18 @@ def test_citas_reconoce_sufijos_de_una_letra():
     assert nums == []
     nums, _ = _citas_no_verificadas("PL 00099-2026-2031-CD", fuentes)
     assert nums == ["00099-2026-2031-CD"]
+
+
+def test_resumen_separa_proyectos_de_la_semana_y_de_contexto():
+    resultado = {"fuente": "SPLEY", "total": 3, "items": [
+        {"numero": "00588-2026-2031-CD", "fecha_presentacion": "15/10/2026", "titulo": "A",
+         "estado": "PRESENTADO", "autor": "X; Y", "enlace": "https://e/588"},
+        {"numero": "00559-2026-2031-CD", "fecha_presentacion": "08/10/2026", "titulo": "B"},
+        {"numero": "00534-2026-2031-CD", "fecha_presentacion": "06/10/2026", "titulo": "C"},
+    ]}
+    r = _separar_por_semana(resultado, "08/10/2026")
+    assert [p["numero"] for p in r["proposiciones_de_la_semana"]] == [
+        "00588-2026-2031-CD", "00559-2026-2031-CD"]
+    assert [p["numero"] for p in r["contexto_vigente"]] == ["00534-2026-2031-CD"]
+    assert "autor" not in r["proposiciones_de_la_semana"][0]
+    assert r["fuente"] == "SPLEY" and "items" not in r

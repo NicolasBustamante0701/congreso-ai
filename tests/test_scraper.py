@@ -10,6 +10,8 @@ from scraper import (
     _contar_items_agenda,
     _detectar_camara,
     _parsear_agenda_dia,
+    _parsear_indice_comisiones,
+    _parsear_tabla_miembros,
     _periodos_de_numero,
     estado_legislativo,
     estado_legislativo_texto,
@@ -235,3 +237,37 @@ def test_mesa_directiva_desde_html_y_agenda():
     ]
     portada = "Sesión del martes 6 de octubre de 2026\nPRESIDENCIA DEL SEÑOR  \nOSCAR DE JESÚS RETO OTERO \n"
     assert _preside_desde_agenda(portada) == "Oscar De Jesús Reto Otero"
+
+
+FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def test_nomina_comision_permanente():
+    miembros = _parsear_tabla_miembros((FIXTURES / "comision-permanente-2026-10-15.html").read_text())
+    assert len(miembros) == 28
+    assert sum(m["camara"] == "Senado" for m in miembros) == 14
+    assert sum(m["camara"] == "Cámara de Diputados" for m in miembros) == 14
+    assert miembros[0] == {"nombre": "Aguinaga Recuenco, Alejandro Aurelio", "camara": "Senado",
+                           "grupo_parlamentario": "FUERZA POPULAR",
+                           "email": "aaguinaga@congreso.gob.pe"}
+
+
+def test_integrantes_comision_del_senado():
+    miembros = _parsear_tabla_miembros(
+        (FIXTURES / "senado-comision-constitucion-2026-10-15.html").read_text())
+    assert len(miembros) == 27   # sin la copia de la tabla para celular
+    assert miembros[0]["nombre"] == "Mesía Ramírez, Carlos Fernando"
+    assert miembros[0]["cargo"] == "Presidente"
+    cargos = [m["cargo"] for m in miembros]
+    assert cargos.count("Titular") == 9 and cargos.count("Suplente") == 15
+
+
+def test_indice_de_comisiones_de_diputados():
+    indice = _parsear_indice_comisiones(
+        (FIXTURES / "diputados-comisiones-2026-10-15.html").read_text(),
+        "https://diputados.congreso.gob.pe/comisiones/")
+    assert indice["Comisión de Salud"] == "https://diputados.congreso.gob.pe/salud/"
+    assert "Comisión de Acusaciones Constitucionales" in indice
+    assert not any(n.lower().startswith("comisión especial") for n in indice)
+    # Solo páginas del portal de la cámara: los visores de wb2server quedan afuera.
+    assert all(u.startswith("https://diputados.congreso.gob.pe/") for u in indice.values())

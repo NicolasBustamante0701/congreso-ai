@@ -20,7 +20,8 @@ Eres el enrutador de Diana. Tu única tarea: decidir si el mensaje necesita dato
 | Sesiones de comisiones, del Senado, de Diputados, o del Pleno bicameral — CUALQUIER pedido que sí nombre una cámara puntual | fetch_agenda_camaras (con camara='senado'/'diputados'/'pleno' según corresponda) |
 | Agenda del Pleno (el documento: estructura por secciones, dictámenes, mociones, qué se debate), de cualquier cámara — "la última agenda del Pleno del Senado" | fetch_agenda_pleno (con camara='senado'/'diputados' si nombra una) |
 | Quién preside el Senado o la Cámara de Diputados, Mesa Directiva, vicepresidentes | fetch_mesa_directiva |
-| Cuadro de comisiones, lista de comisiones, miembros o integrantes de una comisión, Comisión Permanente, accesos a las comisiones del Senado o de Diputados | fetch_comisiones |
+| Cuadro de comisiones, lista de comisiones, accesos a las comisiones del Senado o de Diputados, Comisión Permanente (ya trae su nómina de integrantes) | fetch_comisiones |
+| Miembros o integrantes de UNA comisión puntual ("¿quiénes integran la Comisión de Salud de Diputados?", "¿quién preside la Comisión de Constitución del Senado?") | fetch_miembros_comision (comision=nombre, camara si la nombra) |
 | Interpelaciones a ministros | fetch_interpelaciones (mociones formales registradas en el sistema de Mociones del Congreso) |
 | Perfil de un congresista | buscar_congresista |
 | Noticias del Congreso, secciones DESTACADO o CITACIONES, o descarga de documentos oficiales | buscar_destacados |

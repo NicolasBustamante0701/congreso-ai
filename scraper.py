@@ -2423,30 +2423,37 @@ async def fetch_interpelaciones(ministro: str = None):
     filtrado por el tipo 19 del catálogo del propio Congreso, con el estado
     real de cada una — admitida, en Junta de Portavoces, con ministro citado.
     """
-    mociones, total = await fetch_mociones(tipo="interpelacion", texto=ministro,
-                                           limit=30)
-    if not mociones:
+    # La censura es el paso siguiente a una interpelación: el 15/10/2026 la
+    # del ministro del Interior (Moción 445) estaba en la agenda del Pleno y
+    # Diana no la mencionaba porque solo pedía el tipo "interpelación".
+    (mociones, total), (censuras, _) = await asyncio.gather(
+        fetch_mociones(tipo="interpelacion", texto=ministro, limit=30),
+        fetch_mociones(tipo="censura", texto=ministro, limit=30))
+    if not mociones and not censuras:
         detalle = f" que mencionen a «{ministro}»" if ministro else ""
         return {
             "sin_datos": True,
-            "mensaje": (f"El Congreso no tiene mociones de interpelación registradas"
-                        f"{detalle} en el periodo actual."),
+            "mensaje": (f"El Congreso no tiene mociones de interpelación ni de censura "
+                        f"registradas{detalle} en el periodo actual."),
         }
 
     # Cada moción trae todos sus firmantes (hasta 30 nombres con su bancada):
     # con 4 mociones el resultado pasaba el tope del orquestador, se cortaba
     # la última y el modelo decía que "no aparece en el sistema".
-    for m in mociones:
+    for m in mociones + censuras:
         autores = [a.strip() for a in (m.get("autores") or "").split(";") if a.strip()]
         if len(autores) > 3:
             m["autores"] = "; ".join(autores[:3]) + f"; y {len(autores) - 3} más"
             m["cantidad_firmantes"] = len(autores)
 
-    return {
+    resultado = {
         "fuente": "Sistema de Mociones de Orden del Día — api.congreso.gob.pe",
         "mociones_interpelacion": mociones,
         "total": total,
     }
+    if censuras:
+        resultado["mociones_censura"] = censuras
+    return resultado
 
 
 # ── Agenda bicameral (Senado + Diputados + Pleno) ─────────────
@@ -2761,15 +2768,171 @@ COMISIONES_ENLACES = {
 }
 
 
+# ── Integrantes de comisiones ────────────────────────────────
+#
+# Desde el bicameral cada cámara publica, en su portal, una página por
+# comisión con la tabla de integrantes (Apellidos y Nombres / Grupo
+# Parlamentario / Cargo / e-Mail), y www.congreso.gob.pe/comision-permanente/
+# la nómina de la Comisión Permanente aprobada el 18/08/2026. Verificado el
+# 15/10/2026. Antes Diana decía que la composición "no está en una fuente
+# abierta".
+COMISION_PERMANENTE_URL = f"{CONGRESO}/comision-permanente/"
+COMISIONES_INDICE = {"Senado": f"{SENADO}/comisiones/",
+                     "Cámara de Diputados": f"{DIPUTADOS}/comisiones/"}
+
+
+def _parsear_tabla_miembros(html: str) -> list[dict]:
+    """
+    Integrantes de la primera tabla con encabezado "Apellidos y Nombres".
+
+    La página repite la tabla en formato celular: con la primera alcanza.
+    La cámara sale del enlace al perfil (senado./diputados.), porque la
+    Comisión Permanente mezcla senadores y diputados en una sola lista.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    for tabla in soup.find_all("table"):
+        encabezados = [_sin_acentos(th.get_text(" ", strip=True)) for th in tabla.find_all("th")]
+        if not any("APELLIDOS" in e for e in encabezados):
+            continue
+        miembros = []
+        for fila in tabla.find_all("tr"):
+            celdas = fila.find_all("td")
+            if len(celdas) < len(encabezados) or len(celdas) < 2:
+                continue
+            fila_dict = {}
+            for enc, td in zip(encabezados, celdas):
+                texto = " ".join(td.get_text(" ", strip=True).split())
+                if "APELLIDOS" in enc:
+                    fila_dict["nombre"] = texto
+                    enlace = td.find("a", href=True)
+                    host = urllib.parse.urlparse(enlace["href"]).hostname if enlace else ""
+                    if host and host.startswith("senado."):
+                        fila_dict["camara"] = "Senado"
+                    elif host and host.startswith("diputados."):
+                        fila_dict["camara"] = "Cámara de Diputados"
+                elif "GRUPO" in enc:
+                    fila_dict["grupo_parlamentario"] = texto
+                elif "CARGO" in enc:
+                    fila_dict["cargo"] = texto
+                elif "MAIL" in enc:
+                    fila_dict["email"] = texto
+            if fila_dict.get("nombre"):
+                miembros.append(fila_dict)
+        if miembros:
+            return miembros
+    return []
+
+
+def _parsear_indice_comisiones(html: str, base: str) -> dict[str, str]:
+    """Nombre de cada comisión → su página, desde /comisiones/ de una cámara."""
+    host = urllib.parse.urlparse(base).hostname
+    soup = BeautifulSoup(html, "html.parser")
+    out = {}
+    for a in soup.find_all("a", href=True):
+        nombre = " ".join(a.get_text(" ", strip=True).split()).rstrip(".")
+        # Las especiales también cuelgan de /comisiones/ de Diputados, pero no
+        # son del cuadro de ordinarias: el modelo las listaba como "no
+        # legislativas".
+        if (_sin_acentos(nombre).startswith("COMISION ")
+                and not _sin_acentos(nombre).startswith("COMISION ESPECIAL")
+                and urllib.parse.urlparse(a["href"]).hostname == host
+                and a["href"].rstrip("/") != base.rstrip("/")):
+            out.setdefault(nombre, a["href"])
+    return out
+
+
+async def _indices_comisiones(c, camaras: list[str]) -> dict[str, dict[str, str]]:
+    async def uno(camara):
+        try:
+            r = await c.get(COMISIONES_INDICE[camara])
+            if r.status_code == 200:
+                return camara, _parsear_indice_comisiones(r.text, COMISIONES_INDICE[camara])
+        except Exception as _e:
+            logger.warning("índice de comisiones de %s: %s", camara, _e)
+        return camara, {}
+    return dict(await asyncio.gather(*(uno(cam) for cam in camaras)))
+
+
+async def _nomina_comision_permanente(c) -> dict:
+    try:
+        r = await c.get(COMISION_PERMANENTE_URL)
+        miembros = _parsear_tabla_miembros(r.text) if r.status_code == 200 else []
+    except Exception as _e:
+        logger.warning("nómina de la Comisión Permanente: %s", _e)
+        miembros = []
+    if not miembros:
+        return {"sin_datos": True,
+                "mensaje": "No se pudo leer la nómina en www.congreso.gob.pe/comision-permanente/."}
+    return {"fuente": COMISION_PERMANENTE_URL, "miembros": miembros,
+            "total": len(miembros),
+            "senadores": sum(1 for m in miembros if m.get("camara") == "Senado"),
+            "diputados": sum(1 for m in miembros if m.get("camara") == "Cámara de Diputados")}
+
+
+def _palabras_clave(texto: str) -> set[str]:
+    vacias = {"COMISION", "DE", "DEL", "LA", "LAS", "LOS", "Y", "E", "EN", "ASUNTOS", "EL"}
+    return {w for w in re.findall(r"[A-Z]+", _sin_acentos(texto)) if w not in vacias and len(w) > 2}
+
+
+async def fetch_miembros_comision(comision: str, camara: str = None):
+    """
+    Integrantes de una comisión ordinaria, desde la página de la comisión en
+    el portal de su cámara. `comision` es el nombre o parte ("Constitución",
+    "energía y minas"); sin `camara` busca en las dos, porque varias
+    comisiones existen con el mismo nombre en ambas cámaras.
+    """
+    cam = _sin_acentos(camara or "")
+    camaras = [k for k in COMISIONES_INDICE
+               if not cam or ("SENAD" in cam and k == "Senado")
+               or ("DIPUTAD" in cam and k == "Cámara de Diputados")] or list(COMISIONES_INDICE)
+    if _sin_acentos(comision or "").strip().startswith("PERMANENTE") or \
+            "COMISION PERMANENTE" in _sin_acentos(comision or ""):
+        async with _client() as c:
+            return {"comision_permanente": await _nomina_comision_permanente(c)}
+
+    buscadas = _palabras_clave(comision or "")
+    async with _client() as c:
+        indices = await _indices_comisiones(c, camaras)
+        elegidas = []
+        for camara_k, indice in indices.items():
+            mejor = max(indice.items(), default=None,
+                        key=lambda kv: len(buscadas & _palabras_clave(kv[0])))
+            if mejor and buscadas & _palabras_clave(mejor[0]):
+                elegidas.append((camara_k, *mejor))
+        if not elegidas:
+            disponibles = {k: sorted(v) for k, v in indices.items()}
+            return {"sin_datos": True,
+                    "mensaje": f"No encontré una comisión que coincida con «{comision}».",
+                    "comisiones_disponibles": disponibles}
+
+        async def miembros_de(camara_k, nombre, url):
+            try:
+                r = await _get_oficial(c, url)
+                miembros = _parsear_tabla_miembros(r.text) if r is not None and r.status_code == 200 else []
+            except Exception as _e:
+                logger.warning("integrantes de %s: %s", url, _e)
+                miembros = []
+            for m in miembros:
+                m.pop("camara", None)   # ya está en la comisión
+            return {"camara": camara_k, "comision": nombre, "enlace": url,
+                    "miembros": miembros, "total": len(miembros),
+                    **({} if miembros else {"sin_datos": True})}
+
+        resultados = await asyncio.gather(*(miembros_de(*e) for e in elegidas))
+    return {"fuente": "Portales del Senado y de la Cámara de Diputados — página de cada comisión",
+            "comisiones": resultados}
+
+
 async def fetch_comisiones(camara: str = None):
     """
     Cuadro de comisiones ordinarias del Senado y/o la Cámara de Diputados.
 
     Estructura fija tomada del Reglamento de cada cámara (ver comentario
     arriba de COMISIONES_SENADO) — no de la API SPLEY, que quedó desactualizada
-    tras el paso al bicameral. La composición nominal (quiénes integran cada
-    comisión) sí requiere un servicio con autenticación que no está disponible
-    públicamente: para eso se devuelven los enlaces oficiales.
+    tras el paso al bicameral. Trae además la página oficial de cada comisión
+    (donde cada cámara publica sus integrantes) y la nómina de la Comisión
+    Permanente; los integrantes de una comisión puntual los da
+    fetch_miembros_comision.
     """
     cam = (camara or "").lower().strip()
     incluir_senado = cam in ("", "senado")
@@ -2796,18 +2959,25 @@ async def fetch_comisiones(camara: str = None):
         enlaces = {**COMISIONES_ENLACES["senado"],
                    **COMISIONES_ENLACES["diputados"], **enlaces}
 
+    async with _client() as c:
+        indices, nomina = await asyncio.gather(
+            _indices_comisiones(c, list(camaras)), _nomina_comision_permanente(c))
+    for nombre_camara, datos in camaras.items():
+        if indices.get(nombre_camara):
+            datos["paginas_de_comisiones"] = indices[nombre_camara]
+
     return {
         "fuente": "Reglamento del Senado (Art. 48) y Reglamento de la Cámara de "
-                  "Diputados (Art. 45-46) — estructura fija por reglamento, no una API",
+                  "Diputados (Art. 45-46); páginas de cada comisión y nómina de la "
+                  "Comisión Permanente desde los portales oficiales",
         "camaras": camaras,
         "comision_bicameral_presupuesto": COMISION_BICAMERAL_PRESUPUESTO,
-        "comision_permanente": COMISION_PERMANENTE,
+        "comision_permanente": {**COMISION_PERMANENTE, "nomina": nomina},
         "enlaces_oficiales": enlaces,
         "nota_composicion": (
-            "El Congreso no publica la composición nominal (quiénes integran cada "
-            "comisión, ni tampoco quiénes integran la Comisión Permanente) en una "
-            "API abierta: ese dato está detrás de un servicio con autenticación. "
-            "Los enlaces oficiales de arriba son la vía para consultarla."
+            "Cada comisión publica sus integrantes en su página oficial "
+            "(\"paginas_de_comisiones\"). Para la lista de una comisión puntual "
+            "existe la herramienta fetch_miembros_comision."
         ),
     }
 

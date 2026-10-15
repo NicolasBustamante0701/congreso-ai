@@ -19,6 +19,12 @@ que venga en `camaras`:
 
 Lista las comisiones de `comisiones_legislativas` tal cual vienen — son los
 nombres oficiales del reglamento, no los acortes ni los recombines.
+Si la cámara trae `paginas_de_comisiones` (nombre → página oficial, donde se
+publican sus integrantes), enlaza cada comisión a su página: `[nombre](url)`.
+Usa la URL de la entrada cuyo nombre corresponde; si una comisión no tiene
+página, va sin link. Las listas son las de `comisiones_legislativas` y
+`comisiones_no_legislativas`: no agregues comisiones que solo aparezcan en
+`paginas_de_comisiones`.
 
 **Comisiones ordinarias no legislativas**
 
@@ -35,9 +41,15 @@ Es un órgano aparte de las comisiones ordinarias, no una comisión más de
 ninguna cámara. Usa `comision_permanente.descripcion` para explicar en 2-3
 líneas qué es y quién la integra (senadores + diputados en igual número, más
 las mesas directivas como miembros natos), y entrega los
-`comision_permanente.enlaces` para consultar sus sesiones. Si el usuario pidió
-la nómina de integrantes, aplica la misma nota de `nota_composicion`: no está
-publicada en una fuente abierta.
+`comision_permanente.enlaces` para consultar sus sesiones.
+
+Si el usuario pidió sus **miembros o integrantes**, muestra
+`comision_permanente.nomina`: una tabla | Apellidos y nombres | Cámara | Grupo
+parlamentario | con todos los `miembros`, y debajo el conteo ("28 integrantes:
+14 senadores y 14 diputados", de `senadores` y `diputados`) y el link a la
+`fuente`. Aclara en una línea que, además, integran la Comisión Permanente
+como miembros natos las mesas directivas de ambas cámaras. Si `nomina` trae
+`sin_datos`, dilo con su `mensaje` y entrega el enlace.
 
 ### Comisión Bicameral de Presupuesto
 
@@ -61,10 +73,9 @@ ni acortes URLs: copia exactamente las que vienen en el resultado.
 
 ### Nota sobre miembros
 
-Si el usuario pidió los **miembros o integrantes**, explica en una sola línea, sin
-dramatizar, que la composición nominal no está expuesta en una API abierta del
-Congreso (usa `nota_composicion`) y que se consulta desde los enlaces de arriba.
-Ofrece a continuación buscar una comisión concreta.
+Los integrantes de cada comisión están en su página oficial (los links de
+arriba). Si el usuario pidió los integrantes de una comisión puntual, ofrece
+traerlos: "¿Quieres la lista de integrantes de alguna comisión en particular?"
 
 Cierra con una sugerencia útil y concreta, por ejemplo consultar la agenda de una
 comisión específica o los proyectos que tiene en trámite.

@@ -68,6 +68,12 @@ MAX_TOOL_RESULT_CHARS_POR_TOOL = {
     # 18 000 caracteres). Con 7000 se cortaban justo los últimos: Diana no
     # veía que el Pleno lo aprobó tras una reconsideración y lo envió al Senado.
     "fetch_expediente": 22000,
+    # Cuadro de las dos cámaras + página de cada comisión + nómina de la
+    # Comisión Permanente (28 integrantes): ~12 mil caracteres.
+    "fetch_comisiones": 16000,
+    # Una comisión de Diputados llega a 40 integrantes, y "Constitución" sin
+    # cámara trae las dos.
+    "fetch_miembros_comision": 20000,
 }
 
 # Si aun así no entra, esto se descarta antes de cortar filas: repite los
@@ -160,6 +166,43 @@ def _cuadro_por_temas(items: list[dict], grupos: list[tuple[str, list[str]]],
     if lectura:
         partes.append(f"### Mi lectura\n{lectura}\n")
     return "\n".join(partes)
+
+
+# Lo que usa el resumen semanal de cada proposición: sin autores ni
+# proponente, 134 proposiciones de 15 días entran sin recortar filas.
+CAMPOS_RESUMEN = ("numero", "fecha_presentacion", "titulo", "estado", "camara", "enlace")
+
+
+def _separar_por_semana(resultado, desde: str):
+    """
+    Parte las proposiciones del resumen semanal en las de la semana y las de
+    contexto (8 a 15 días), por su fecha real.
+
+    El prompt pedía esa separación y el modelo igual metía proyectos del
+    06/10 entre los hallazgos de la semana del 08/10 al 15/10 (visto el
+    15/10/2026). Separadas de antemano, cada lista ya dice dónde va.
+    """
+    if not isinstance(resultado, dict) or not isinstance(resultado.get("items"), list):
+        return resultado
+    try:
+        corte = datetime.strptime(desde, "%d/%m/%Y").date()
+    except ValueError:
+        return resultado
+    semana, contexto = [], []
+    for p in resultado["items"]:
+        fila = {k: p[k] for k in CAMPOS_RESUMEN if p.get(k)}
+        try:
+            fecha = datetime.strptime(p.get("fecha_presentacion") or "", "%d/%m/%Y").date()
+        except ValueError:
+            continue   # sin fecha no se puede ubicar en ninguna ventana
+        (semana if fecha >= corte else contexto).append(fila)
+    otros = {k: v for k, v in resultado.items() if k not in ("items", "total")}
+    return {**otros,
+            "proposiciones_de_la_semana": semana,
+            "contexto_vigente": contexto,
+            "nota": (f"\"proposiciones_de_la_semana\" son las presentadas desde el {desde}: "
+                     "van en las secciones por tema. \"contexto_vigente\" son anteriores: "
+                     "solo pueden ir en la sección Contexto vigente, nunca en los temas.")}
 
 
 def _recortar_resultado(nombre: str, resultado) -> str:
@@ -925,7 +968,9 @@ class ChatOrchestrator:
 
         resultados = await asyncio.gather(*(una(n, a) for n, a in llamadas))
         for (name, _), result in zip(llamadas, resultados):
-            if name == "buscar_proyectos" and self.proyectos_agrupados:
+            if name == "buscar_proyectos" and self.is_resumen:
+                result = _separar_por_semana(result, self.desde)
+            elif name == "buscar_proyectos" and self.proyectos_agrupados:
                 result = _compactar_para_agrupado(result)
                 if isinstance(result, dict) and isinstance(result.get("items"), list):
                     self.proyectos_items = result["items"]

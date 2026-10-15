@@ -20,6 +20,7 @@ from scraper import (
     fetch_formula_legal,
     fetch_interpelaciones,
     fetch_mesa_directiva,
+    fetch_miembros_comision,
     fetch_proyectos,
     fetch_sesiones,
 )
@@ -301,6 +302,32 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "fetch_miembros_comision",
+            "description": (
+                "Integrantes (presidente, vicepresidente, secretario, titulares y "
+                "suplentes, con su bancada) de UNA comisión puntual, o la nómina de "
+                "la Comisión Permanente (comision='Comisión Permanente'). Sale de la "
+                "página oficial de la comisión en el portal de su cámara."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "comision": {
+                        "type": "string",
+                        "description": "Nombre o parte del nombre: 'Constitución', 'Energía y Minas', 'Comisión Permanente'."
+                    },
+                    "camara": {
+                        "type": "string",
+                        "description": "Opcional: 'senado' o 'diputados'. Omitir si no la nombra: varias comisiones existen en las dos cámaras."
+                    }
+                },
+                "required": ["comision"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "responder_directo",
             "description": "Sin datos externos: saludos, seguimiento de algo ya respondido, o conceptos que ya sabes.",
             "parameters": {
@@ -386,6 +413,7 @@ TOOL_MAP = {
     "fetch_agenda_pleno":      lambda args: fetch_agenda_pleno(**_solo(args, fetch_agenda_pleno)),
     "fetch_mesa_directiva":    lambda args: fetch_mesa_directiva(**_solo(args, fetch_mesa_directiva)),
     "fetch_comisiones":        lambda args: fetch_comisiones(**{k: v for k, v in args.items() if k in ("camara",)}),
+    "fetch_miembros_comision": lambda args: fetch_miembros_comision(**{k: v for k, v in args.items() if k in ("comision", "camara")}),
     "fetch_agenda_camaras":    lambda args: fetch_agenda_camaras(**{k: v for k, v in args.items() if k in ("dias", "camara")}),
     "fetch_interpelaciones":   lambda args: fetch_interpelaciones(**{k: v for k, v in args.items() if k in ("ministro",)}),
     "leer_formula_legal":      lambda args: fetch_formula_legal(**{k: v for k, v in args.items() if k in ("numero_proyecto",)}),
@@ -404,6 +432,7 @@ STATUS_LABELS = {
     "fetch_agenda_pleno":      "Cargando la Agenda del Pleno...",
     "fetch_mesa_directiva":    "Consultando la Mesa Directiva...",
     "fetch_comisiones":        "Consultando el cuadro de comisiones...",
+    "fetch_miembros_comision": "Consultando los integrantes de la comisión...",
     "fetch_agenda_camaras":    "Revisando agenda del Congreso bicameral...",
     "fetch_interpelaciones":   "Buscando mociones de interpelación...",
     "leer_formula_legal":      "Leyendo el texto real del proyecto...",
