@@ -25,8 +25,10 @@ const path = require('path');
 const { Readable } = require('stream');
 const { pipeline } = require('stream/promises');
 
-const { owner, repo } = require('./package.json').build.publish;
-const API_ULTIMO = `https://api.github.com/repos/${owner}/${repo}/releases/latest`;
+// Fijo acá y no leído de package.json: electron-builder le quita la sección
+// "build" al package.json que empaqueta, y leerla tiraba la app al arrancar.
+const REPO = 'NicolasBustamante0701/congreso-ai';
+const API_ULTIMO = `https://api.github.com/repos/${REPO}/releases/latest`;
 const BUSCAR_CADA_MS = 60 * 60 * 1000;
 const REVISAR_REINICIO_CADA_MS = 5 * 60 * 1000;
 const INACTIVO_PARA_REINICIAR_S = 20 * 60;

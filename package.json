@@ -47,6 +47,13 @@
     "releaseInfo": {
       "releaseNotes": "## Qué archivo bajar\n\n- **Mac con Apple Silicon (M1, M2, M3, M4…):** `Diana-…-arm64.dmg`\n- **Mac con Intel:** `Diana-…-x64.dmg`\n\nPara saber cuál es tu Mac: menú Apple → Acerca de esta Mac. Si dice \"Chip Apple M…\", es Apple Silicon.\n\n## Primera vez que la abres\n\nLa app no está firmada con una cuenta de Apple Developer, así que macOS pide confirmación la primera vez:\n\n1. Abre el DMG y arrastra **Diana** a Aplicaciones.\n2. En Aplicaciones, **clic derecho sobre Diana → Abrir**, y en el aviso, **Abrir**.\n3. En macOS 15 (Sequoia) o superior: ábrela una vez, ve a **Ajustes del Sistema → Privacidad y Seguridad** y toca **Abrir igualmente**.\n\nDesde ahí abre normal. **Las versiones nuevas se instalan solas:** Diana avisa cuando hay una y se reinicia en unos segundos.\n"
     },
-    "afterPack": "scripts/firmar-adhoc.js"
+    "afterPack": "scripts/firmar-adhoc.js",
+    "files": [
+      "main.js",
+      "preload.js",
+      "updater.js",
+      "package.json",
+      "static/**/*"
+    ]
   }
 }
