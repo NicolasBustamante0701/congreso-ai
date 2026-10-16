@@ -1164,7 +1164,11 @@ async def fetch_videos_youtube(limit=20):
                 duration    = e.get("duration")
                 timestamp   = e.get("timestamp") or e.get("release_timestamp")
                 live_status = e.get("live_status") or "not_live"
-                is_live     = live_status in ("is_live", "is_upcoming")
+                # "is_upcoming" es una transmisión programada que todavía no
+                # empezó: contarla como en vivo ponía "En vivo ahora" en el
+                # panel antes de tiempo.
+                is_live     = live_status == "is_live"
+                programado  = live_status == "is_upcoming"
                 was_live    = live_status in ("was_live", "post_live")
                 fecha = ""
                 if timestamp:
@@ -1185,6 +1189,7 @@ async def fetch_videos_youtube(limit=20):
                     "duracion":  dur_str,
                     "en_vivo":   is_live,
                     "fue_live":  was_live,
+                    "programado": programado,
                     "url":       f"https://www.youtube.com/watch?v={vid_id}" if vid_id else "",
                     "thumb":     f"https://img.youtube.com/vi/{vid_id}/mqdefault.jpg" if vid_id else "",
                 })

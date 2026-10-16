@@ -343,7 +343,8 @@
       const card = cont.querySelector(`[data-tarjeta="${k}"]`);
       if (!card) return;
       card.classList.remove('is-cargando');
-      if (sinDatos) card.classList.add('is-sin-datos');
+      card.classList.toggle('is-sin-datos', !!sinDatos);
+      card.querySelector('.tarjeta-pulso')?.remove();
       const v = card.querySelector('.tarjeta-valor');
       v.innerHTML = valor != null ? esc(valor) : '';
       if (num != null) { const span = document.createElement('span'); v.appendChild(span); contar(span, num); }
@@ -356,9 +357,12 @@
       fill('sesion', { valor: `${p.etiqueta_fecha} · ${p.hora}`, sub: [p.camara, p.tema].filter(Boolean).join(' — '), vivo: p.etiqueta_fecha === 'Hoy' });
     } else fill('sesion', m ? { valor: 'Sin sesiones', sub: 'en los próximos 14 días' } : { valor: '—', sub: 'La agenda oficial no respondió', sinDatos: true });
     if (d.ag) {
-      const n = d.ag.sesiones.filter((s) => new Date(s.iso) >= new Date(Date.now() - 3600e3)).length;
-      const hoy = d.ag.sesiones.filter((s) => s.dia === 'Hoy').length;
-      fill('semana', { num: n, sub: hoy ? `${hoy} hoy · Senado, Diputados y comisiones` : 'Senado, Diputados y comisiones' });
+      // Las dos cifras cuentan lo mismo: lo que falta desde ahora. Antes el
+      // número era "desde ahora" y el "N hoy" incluía las ya pasadas (3 en
+      // 7 días con "10 hoy", 15/10/2026 a las 4 PM).
+      const proximas = d.ag.sesiones.filter((s) => new Date(s.iso) >= new Date(Date.now() - 3600e3));
+      const hoy = proximas.filter((s) => s.dia === 'Hoy').length;
+      fill('semana', { num: proximas.length, sub: hoy ? `${hoy} más hoy · Senado, Diputados y comisiones` : 'Senado, Diputados y comisiones' });
     } else fill('semana', { valor: '—', sub: 'La agenda oficial no respondió', sinDatos: true });
     if (m?.proyectos_ingresados) fill('proyectos', { num: m.proyectos_ingresados.total, sub: `en los últimos ${m.proyectos_ingresados.dias} días · SPLEY` });
     else fill('proyectos', { valor: '—', sub: 'SPLEY no respondió', sinDatos: true });
@@ -386,7 +390,8 @@
         vivoCache = { t: Date.now(), v: (r.videos || []).find((v) => v.en_vivo) || null };
       }
       const v = vivoCache.v;
-      if (!v || !cont.isConnected) return;
+      if (!cont.isConnected) return;
+      if (!v) { cont.innerHTML = ''; return; }
       cont.innerHTML = `<button class="en-vivo" data-goto="sesiones"><span class="en-vivo-punto" aria-hidden="true"></span>
         <span><strong>En vivo ahora:</strong> ${esc(v.titulo.replace(/^🔴\s*/, ''))}</span><span class="en-vivo-cta">Transcribir →</span></button>`;
     } catch { /* sin aviso */ }
@@ -1024,6 +1029,32 @@
   }
   tickReloj();
   setInterval(tickReloj, 1000);
+
+  // La app suele quedar abierta de un día para otro: el panel de bienvenida
+  // y el Inicio se armaban una sola vez y el 16/10 seguían diciendo "Jueves,
+  // 15 de octubre", con el "En vivo" y las cifras del día anterior. Se
+  // refrescan solos cada 5 minutos y al volver a la ventana; si cambió el
+  // día, se rearman enteros.
+  let diaPanel = new Date().toDateString();
+  let ultimoRefresco = Date.now();
+  function refrescarPantallas(forzar = false) {
+    const cambioDia = new Date().toDateString() !== diaPanel;
+    if (!forzar && !cambioDia && Date.now() - ultimoRefresco < 5 * 60 * 1000) return;
+    diaPanel = new Date().toDateString();
+    ultimoRefresco = Date.now();
+    panelCache = null;
+    vivoCache = null;
+    const panel = $('panel-tarjetas');
+    if (panel && !$('view-diana').hidden && !streaming) {
+      if (cambioDia) renderVacio();
+      else { llenarPanel(panel); avisoEnVivo($('en-vivo-slot')); }
+    }
+    if (!$('view-inicio').hidden) cargarInicio();
+    if (cambioDia && !$('view-agenda').hidden) cargarAgenda(true);
+  }
+  setInterval(() => refrescarPantallas(), 60 * 1000);
+  window.addEventListener('focus', () => refrescarPantallas());
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) refrescarPantallas(); });
   $('agenda-recargar').addEventListener('click', () => cargarAgenda(true));
   $('agenda-filtro').addEventListener('input', () => agendaDatos && pintarAgenda());
   document.querySelectorAll('#agenda-camaras .seg-btn').forEach((b) => b.addEventListener('click', () => {

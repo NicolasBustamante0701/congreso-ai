@@ -150,6 +150,7 @@ async function loadVideos() {
 
       const liveBadge = v.en_vivo
         ? `<span class="lv-badge-live">🔴 EN VIVO</span>`
+        : v.programado ? `<span class="lv-badge-past">Programado</span>`
         : v.fue_live ? `<span class="lv-badge-past">Finalizado</span>` : "";
 
       const duration = v.duracion
