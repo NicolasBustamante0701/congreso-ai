@@ -30,7 +30,7 @@ app.setName(APP_NAME);
 // los datos ni el puerto de la app que ya está abierta.
 if (process.env.DIANA_USER_DATA) app.setPath('userData', process.env.DIANA_USER_DATA);
 if (process.platform === 'linux') app.setDesktopName('congreso-ai.desktop');
-const { autoUpdater } = require('electron-updater');
+const updater = require('./updater');
 
 const PORT = Number(process.env.DIANA_PORT) || 8732;   // puerto único para no chocar con adam
 let   win  = null;
@@ -540,30 +540,12 @@ ipcMain.handle('load-history', () => {
   }
 });
 
-// ── Auto-update ──────────────────────────────────────────────
-function setupAutoUpdater() {
-  if (!app.isPackaged) return;
-
-  autoUpdater.checkForUpdates().catch(err => logMain(`auto-update falló: ${err.message}`));
-
-  autoUpdater.on('update-downloaded', () => {
-    dialog.showMessageBox(win, {
-      type: 'info',
-      title: 'Actualización lista',
-      message: 'Hay una nueva versión de Diana. ¿Instalar ahora?',
-      buttons: ['Instalar y reiniciar', 'Después'],
-    }).then(({ response }) => {
-      if (response === 0) autoUpdater.quitAndInstall();
-    });
-  });
-}
-
 // ── Ciclo de vida ────────────────────────────────────────────
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null);
   startServer();
   createWindow();
-  setupAutoUpdater();
+  updater.iniciar({ logMain, puerto: PORT });
   setInterval(healthCheck, HEALTH_INTERVAL_MS);
   globalShortcut.register('CmdOrCtrl+Shift+R', () => {
     win?.webContents.reloadIgnoringCache();

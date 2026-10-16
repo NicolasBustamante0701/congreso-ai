@@ -32,6 +32,23 @@ DONE = "data: [DONE]\n\n"
 PING = ": ping\n\n"
 
 
+# Respuestas y transcripciones en curso. El actualizador de la app (ver
+# updater.js) lo lee en /status para no reiniciar Diana en medio de una
+# respuesta o de una transcripción en vivo que corre sola.
+EN_CURSO = 0
+
+
+async def ocupando(gen):
+    """Reemite `gen` contando que hay un trabajo en curso mientras dura."""
+    global EN_CURSO
+    EN_CURSO += 1
+    try:
+        async for ev in gen:
+            yield ev
+    finally:
+        EN_CURSO -= 1
+
+
 async def vigilar_desconexion(request, gen, ping_cada: float = 5.0):
     """
     Reemite los eventos (ya formateados) de `gen` y corta si el cliente se fue.
@@ -43,6 +60,8 @@ async def vigilar_desconexion(request, gen, ping_cada: float = 5.0):
     eso dispara sus finally y corta las llamadas al LLM y al scraper en vez de
     dejarlas terminar para nadie.
     """
+    global EN_CURSO
+    EN_CURSO += 1
     pendiente = None
     try:
         while True:
@@ -74,4 +93,5 @@ async def vigilar_desconexion(request, gen, ping_cada: float = 5.0):
             # sin leer la excepción, asyncio la loguea como "Task exception
             # was never retrieved" (visto el 15/10/2026 en un expediente).
             pendiente.exception()
+        EN_CURSO -= 1
         await gen.aclose()

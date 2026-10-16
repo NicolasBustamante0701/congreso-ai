@@ -8,9 +8,7 @@
     "start:linux": "electron . --no-sandbox --disable-gpu-sandbox --disable-software-rasterizer",
     "build": "electron-builder"
   },
-  "dependencies": {
-    "electron-updater": "^6.3.0"
-  },
+  "dependencies": {},
   "devDependencies": {
     "electron": "^32.0.0",
     "electron-builder": "^25.0.0",
@@ -32,17 +30,23 @@
     "mac": {
       "category": "public.app-category.utilities",
       "icon": "static/app-icon.png",
-      "target": "dmg",
-      "identity": null
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "identity": null,
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false
     },
     "publish": {
       "provider": "github",
-      "owner": "nicobus0701-dot",
+      "owner": "NicolasBustamante0701",
       "repo": "congreso-ai",
       "releaseType": "release"
     },
     "releaseInfo": {
-      "releaseNotes": "Diana para macOS (Intel y Apple Silicon vía Rosetta 2).\n\n## Primera vez que la abrís\n\nLa app no está firmada con una cuenta de Apple Developer, así que macOS la pone en cuarentena al bajarla y no abre con doble clic la primera vez.\n\n1. Arrastrá **Diana** a Aplicaciones.\n2. En Aplicaciones, **clic derecho sobre la app → Abrir** (no doble clic).\n3. En el aviso, tocá **Abrir**.\n\nA partir de ahí abre normal, con doble clic, como cualquier otra app.\n\nEn macOS 15 (Sequoia) o superior el clic derecho ya no alcanza: abrila una vez, y despues andá a **Ajustes del Sistema → Privacidad y Seguridad**, donde va a aparecer un botón **Abrir igualmente**.\n\nAlternativa en una línea, desde la Terminal:\n\n```\nxattr -dr com.apple.quarantine \"/Applications/Diana.app\"\n```\n"
-    }
+      "releaseNotes": "## Qué archivo bajar\n\n- **Mac con Apple Silicon (M1, M2, M3, M4…):** `Diana-…-arm64.dmg`\n- **Mac con Intel:** `Diana-…-x64.dmg`\n\nPara saber cuál es tu Mac: menú Apple → Acerca de esta Mac. Si dice \"Chip Apple M…\", es Apple Silicon.\n\n## Primera vez que la abres\n\nLa app no está firmada con una cuenta de Apple Developer, así que macOS pide confirmación la primera vez:\n\n1. Abre el DMG y arrastra **Diana** a Aplicaciones.\n2. En Aplicaciones, **clic derecho sobre Diana → Abrir**, y en el aviso, **Abrir**.\n3. En macOS 15 (Sequoia) o superior: ábrela una vez, ve a **Ajustes del Sistema → Privacidad y Seguridad** y toca **Abrir igualmente**.\n\nDesde ahí abre normal. **Las versiones nuevas se instalan solas:** Diana avisa cuando hay una y se reinicia en unos segundos.\n"
+    },
+    "afterPack": "scripts/firmar-adhoc.js"
   }
 }

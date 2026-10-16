@@ -1,0 +1,146 @@
+name: Publicar versión
+
+# Cada push a main publica una versión nueva de Diana: corre los tests, sube
+# el número de versión (último tag + 1 en el último dígito), arma la app para
+# Apple Silicon (arm64) y para Intel (x64) y crea el release en GitHub. Las
+# apps instaladas lo encuentran solas (updater.js) y se actualizan.
+#
+# Para un push que no deba publicar nada, poner [sin release] en el mensaje
+# del commit.
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  tests:
+    if: ${{ !contains(github.event.head_commit.message, '[sin release]') }}
+    runs-on: ubuntu-latest
+    env:
+      GROQ_API_KEY: test-key-mock
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt -r requirements-dev.txt ruff
+      - run: ruff check .
+      - run: pytest tests/ -q
+
+  version:
+    needs: tests
+    runs-on: ubuntu-latest
+    outputs:
+      numero: ${{ steps.v.outputs.numero }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: v
+        run: |
+          ultimo=$(git tag -l 'v*' --sort=-v:refname | head -1)
+          ultimo=${ultimo#v}
+          IFS=. read -r a b c <<< "${ultimo:-1.0.0}"
+          echo "numero=$a.$b.$((c + 1))" >> "$GITHUB_OUTPUT"
+          echo "Versión nueva: $a.$b.$((c + 1)) (anterior: ${ultimo:-ninguna})"
+
+  build:
+    needs: version
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          # Cada arquitectura se compila en su propia máquina: el servidor
+          # (PyInstaller) sale para la arquitectura de quien lo compila.
+          - arch: arm64
+            runner: macos-15
+          - arch: x64
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+    env:
+      VERSION: ${{ needs.version.outputs.numero }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Servidor Python (PyInstaller)
+        run: |
+          pip install -r requirements.txt pyinstaller
+          pyinstaller server.spec
+
+      # El DMG sale SIN credenciales: cada usuario pega su key en Ajustes.
+      - name: Verificar que no viajen credenciales
+        run: |
+          if find dist/server -name '.env*' | grep -q .; then
+            echo "::error::Hay un .env dentro de dist/server: las keys irían en la app"
+            exit 1
+          fi
+
+      - name: Arquitectura del servidor
+        run: |
+          file dist/server/server
+          lipo -archs dist/server/server | grep -qw "${{ matrix.arch == 'x64' && 'x86_64' || 'arm64' }}"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: App (Electron)
+        run: |
+          npm ci
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
+          npx electron-builder --mac dmg zip --${{ matrix.arch }} --publish never
+
+      # La app tiene que arrancar en esta arquitectura: abre, levanta el
+      # servidor y responde /status.
+      - name: Prueba de arranque
+        run: |
+          APP="release/mac$([ '${{ matrix.arch }}' = arm64 ] && echo -arm64)/Diana.app"
+          ls -d "$APP"
+          codesign --verify --deep --strict "$APP"
+          DIANA_PORT=8790 DIANA_USER_DATA="$RUNNER_TEMP/ud" "$APP/Contents/MacOS/Diana" &
+          for i in $(seq 1 90); do
+            curl -sf http://127.0.0.1:8790/status && break
+            sleep 2
+          done
+          curl -sf http://127.0.0.1:8790/status
+          kill %1 || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: diana-${{ matrix.arch }}
+          path: |
+            release/Diana-*.dmg
+            release/Diana-*.zip
+          if-no-files-found: error
+
+  release:
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.version.outputs.numero }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artefactos
+          merge-multiple: true
+      - name: Crear el release
+        run: |
+          ls -la artefactos
+          node -e "process.stdout.write(require('./package.json').build.releaseInfo.releaseNotes)" > notas.md
+          printf '\n\n## Cambios\n\n%s\n' "$(git log -1 --format='%s%n%n%b' | grep -v '^Co-Authored-By')" >> notas.md
+          gh release create "v$VERSION" artefactos/* \
+            --target "$GITHUB_SHA" --title "$VERSION" --notes-file notas.md

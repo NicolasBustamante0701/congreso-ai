@@ -132,4 +132,4 @@ async def sesiones_resumir_texto(request: Request):
         async for ev in _stream_resumen(titulo, texto):
             yield ev
 
-    return StreamingResponse(generate(), media_type="text/event-stream")
+    return StreamingResponse(sse.ocupando(generate()), media_type="text/event-stream")

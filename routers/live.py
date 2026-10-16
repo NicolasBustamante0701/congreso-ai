@@ -170,7 +170,7 @@ async def live_transcribe(request: Request,
                     logger.exception("no se pudo cerrar la sesión guardada de %s", video_id)
         yield sse.DONE
 
-    return StreamingResponse(generate(), media_type="text/event-stream",
+    return StreamingResponse(sse.ocupando(generate()), media_type="text/event-stream",
                              headers=NO_BUFFER)
 
 
@@ -206,5 +206,5 @@ async def live_analyze(request: Request):
                 return
         yield sse.DONE
 
-    return StreamingResponse(generate(), media_type="text/event-stream",
+    return StreamingResponse(sse.ocupando(generate()), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache"})

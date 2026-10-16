@@ -7,13 +7,14 @@ from fastapi.responses import HTMLResponse
 
 from config import LLM_API_KEY, ahora_lima, static_file
 from scraper import fetch_agenda_camaras, fetch_destacados, fetch_proyectos
+from services import sse
 
 router = APIRouter()
 
 
 @router.get("/status")
 async def status():
-    return {"ready": bool(LLM_API_KEY)}
+    return {"ready": bool(LLM_API_KEY), "ocupado": sse.EN_CURSO}
 
 
 # Estructura fija de comisiones ordinarias (ver scraper.COMISIONES_SENADO /
