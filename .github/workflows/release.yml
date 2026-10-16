@@ -106,7 +106,7 @@ jobs:
       # servidor y responde /status.
       - name: Prueba de arranque
         run: |
-          APP="release/mac$([ '${{ matrix.arch }}' = arm64 ] && echo -arm64)/Diana.app"
+          APP="release/${{ matrix.arch == 'arm64' && 'mac-arm64' || 'mac' }}/Diana.app"
           codesign --verify --deep --strict "$APP"
           lipo -archs "$APP/Contents/MacOS/Diana"
           # 1) El servidor empaquetado solo.
