@@ -146,39 +146,36 @@ consultados al proveedor de IA elegido; el audio de las sesiones (tramos de
 
 ## Instalar la app (usuarios)
 
-El DMG sale de la pestaña [Releases](https://github.com/nicobus0701-dot/congreso-ai/releases).
+Los instaladores salen de [Releases](https://github.com/NicolasBustamante0701/congreso-ai/releases/latest):
 
-La app **no está firmada** con una cuenta de Apple Developer (son $99/año), así
-que macOS le pone el atributo de cuarentena al bajarla y la primera apertura
-tiene un paso extra. Después de eso abre con doble clic como cualquier app:
+- **Mac con Apple Silicon (M1, M2, M3, M4…):** `Diana-<versión>-arm64.dmg`
+- **Mac con Intel:** `Diana-<versión>-x64.dmg`
+
+La app no está firmada con una cuenta de Apple Developer, así que la primera
+apertura tiene un paso extra:
 
 1. Arrastrá **Diana** a Aplicaciones.
-2. **Clic derecho sobre la app → Abrir** (el doble clic no alcanza la primera vez).
-3. En el aviso, tocá **Abrir**.
+2. **Clic derecho sobre la app → Abrir**, y en el aviso, **Abrir**.
+3. En macOS 15 (Sequoia) o superior: abrila una vez, andá a **Ajustes del
+   Sistema → Privacidad y Seguridad** y tocá **Abrir igualmente**.
 
-En macOS 15 (Sequoia) o superior el clic derecho ya no sirve: abrila una vez,
-y después andá a **Ajustes del Sistema → Privacidad y Seguridad**, donde
-aparece un botón **Abrir igualmente**.
+O directo: `xattr -dr com.apple.quarantine "/Applications/Diana.app"`.
 
-O directo, sin diálogos:
+Después de eso **no hay que volver a instalar nada**: Diana se actualiza sola.
 
-```bash
-xattr -dr com.apple.quarantine "/Applications/Diana.app"
-```
+## Publicar una versión
 
-No hace falta tener Python, Node ni ffmpeg: el servidor va compilado adentro
-del bundle y ffmpeg viaja en el wheel de `imageio-ffmpeg` (ver `server.spec`).
+Cada push a `main` publica una versión (`.github/workflows/release.yml`):
+corre los tests, sube el número de versión (último tag + 1), arma la app en un
+runner Apple Silicon (arm64) y en uno Intel (x64), prueba que cada una arranque
+y crea el release con los DMG y los `.zip`. Con `[sin release]` en el mensaje
+del commit no se publica nada.
 
-Estas instrucciones también van en las notas de cada release
-(`build.releaseInfo.releaseNotes` en `package.json`), así que quien baje el DMG
-las ve sin entrar acá.
-
-## Empaquetar el DMG
-
-Lo hace el workflow `build-mac.yml` al pushear un tag `v*`. Corre en un runner
-**Intel** a propósito: `macos-latest` es Apple Silicon y produce un DMG arm64
-que no arranca en una Mac Intel (Rosetta 2 traduce x86→arm, no al revés). El
-DMG x64 corre nativo en Intel y bajo Rosetta 2 en Apple Silicon.
+Las apps instaladas buscan versiones nuevas al abrir y cada hora
+(`updater.js`): bajan el `.zip` de su arquitectura, lo verifican (tamaño,
+sha256 y versión), lo instalan al cerrar Diana y, si queda abierta, la
+reinician cuando nadie la usa (20 minutos sin tocar la Mac y nada en curso).
+No usa electron-updater: en Mac ese exige firma de Apple Developer.
 
 ### Credenciales: el DMG sale sin keys
 
