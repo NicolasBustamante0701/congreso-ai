@@ -83,6 +83,31 @@ _DESCARTABLES = ("todos_los_adjuntos",)
 _LISTAS_CRONOLOGICAS = ("seguimiento",)
 
 
+# "14864/2025-CR", "00588-2026-2031-CD", "PL 98".
+_NUM_EN_PEDIDO_RE = re.compile(r"\b0*(\d{2,5})\s*[-/]\s*\d{4}(?:\s*-\s*\d{4})?\s*-\s*[A-Za-z]{1,2}\b")
+
+
+def _corregir_numero_copiado(args: dict, pedido: str) -> dict:
+    """
+    Si el router copió mal el número de proyecto que el usuario escribió, se
+    usa el del pedido. Visto con Mistral (open-mistral-nemo) el 15/10/2026:
+    el usuario escribió 14864/2025-CR y el router pidió 148864/2025-CR, así
+    que Diana respondió que el proyecto no existe.
+    """
+    en_pedido = [m.group(0) for m in _NUM_EN_PEDIDO_RE.finditer(pedido or "")]
+    if len(en_pedido) != 1:
+        return args
+    correcto = en_pedido[0]
+    digitos_ok = int(_NUM_EN_PEDIDO_RE.match(correcto).group(1))
+    for clave in ("numero_proyecto", "numero"):
+        valor = str(args.get(clave) or "")
+        m = re.match(r"\D*0*(\d+)", valor)
+        if m and int(m.group(1)) != digitos_ok:
+            logger.warning("Número de proyecto mal copiado por el router: %r → %r", valor, correcto)
+            args = {**args, clave: correcto}
+    return args
+
+
 def _compactar_para_agrupado(resultado):
     """Deja en cada proposición solo las columnas del cuadro agrupado."""
     if not isinstance(resultado, dict) or not isinstance(resultado.get("items"), list):
@@ -96,15 +121,21 @@ POR_TEMAS_RE = re.compile(r"\b(temas?|tem[aá]tic\w*|materias?)\b", re.IGNORECAS
 
 PROMPT_CLASIFICAR = """Clasifica proposiciones legislativas del Congreso del Perú por tema.
 
-Recibes una lista "numero | titulo". Devuelve SOLO un objeto JSON, sin texto antes ni después:
-{"grupos": [{"tema": "Seguridad ciudadana y justicia", "numeros": ["00588-2026-2031-CD", ...]}, ...],
+Recibes una lista "id | titulo". Devuelve SOLO un objeto JSON, sin texto antes ni después:
+{"grupos": [{"tema": "Seguridad ciudadana y justicia", "ids": [1, 4, 7]}, ...],
  "lectura": "2-3 oraciones: qué temas concentran la producción y qué patrón se ve."}
 
 Reglas:
 - Entre 4 y 8 temas, con nombres cortos y concretos.
-- Cada número va en UN solo tema, y todos los números de la lista van en alguno.
-- Copia los números exactamente como vienen.
+- Cada id va en UN solo tema, y todos los ids de la lista van en alguno.
+- "ids" son los números enteros de la primera columna.
 - "lectura" se basa solo en los títulos; no inventes autores, fechas ni resultados."""
+
+# Grupos sueltos, por si el JSON entero no parsea (una coma de más, la
+# "lectura" con comillas sin escapar): cada {"tema": ..., "ids": [...]} se
+# rescata por separado.
+_GRUPO_RE = re.compile(r'"tema"\s*:\s*"([^"]+)"\s*,\s*"(?:ids|numeros)"\s*:\s*\[([^\]]*)\]')
+_LECTURA_RE = re.compile(r'"lectura"\s*:\s*"((?:[^"\\]|\\.)*)"')
 
 
 def _parsear_clasificacion(texto: str, numeros: list[str]) -> tuple[list[tuple[str, list[str]]], str] | None:
@@ -114,13 +145,28 @@ def _parsear_clasificacion(texto: str, numeros: list[str]) -> tuple[list[tuple[s
     None si la respuesta no es un JSON con grupos.
     """
     m = re.search(r"\{.*\}", texto, re.DOTALL)
-    if not m:
-        return None
-    try:
-        datos = json.loads(m.group(0))
-        grupos_crudos = datos["grupos"]
-    except (ValueError, KeyError, TypeError):
-        return None
+    datos = None
+    if m:
+        try:
+            datos = json.loads(m.group(0))
+            grupos_crudos = datos["grupos"]
+        except (ValueError, KeyError, TypeError):
+            datos = None
+    if datos is None:
+        grupos_crudos = [{"tema": t, "ids": re.findall(r'"?([\w-]+)"?', lista)}
+                         for t, lista in _GRUPO_RE.findall(texto)]
+        lectura = _LECTURA_RE.search(texto)
+        datos = {"lectura": lectura.group(1) if lectura else ""}
+        if not grupos_crudos:
+            return None
+
+    def a_numero(ref):
+        # ids 1..N (lo que se pide ahora) o el número completo del proyecto.
+        if isinstance(ref, int) or (isinstance(ref, str) and ref.isdigit()):
+            i = int(ref)
+            return numeros[i - 1] if 1 <= i <= len(numeros) else None
+        return ref if isinstance(ref, str) else None
+
     validos = set(numeros)
     vistos: set[str] = set()
     grupos: list[tuple[str, list[str]]] = []
@@ -128,8 +174,11 @@ def _parsear_clasificacion(texto: str, numeros: list[str]) -> tuple[list[tuple[s
         if not isinstance(g, dict):
             continue
         tema = str(g.get("tema") or "").strip()
-        suyos = [n for n in (g.get("numeros") or [])
-                 if isinstance(n, str) and n in validos and n not in vistos]
+        suyos = []
+        for ref in g.get("ids") or g.get("numeros") or []:
+            n = a_numero(ref)
+            if n in validos and n not in vistos and n not in suyos:
+                suyos.append(n)
         if not tema or not suyos:
             continue
         vistos.update(suyos)
@@ -568,6 +617,40 @@ _FIN_RAZONAMIENTO_RE = re.compile(
     r"(?:Redacto|Escribo|Preparo|Armo|Procedo a (?:redactar|escribir))[^.\n]*\.\s*")
 
 
+# Mistral (ministral-14b, visto el 15/10/2026 en 2 de 13 preguntas) a veces
+# "alinea" las columnas de una tabla con espacios y no para hasta agotar
+# max_tokens: la respuesta quedaba en un encabezado y 13 mil espacios.
+_DEGENERADO = " " * 120
+# Ningún markdown legítimo necesita 8 espacios seguidos fuera de un bloque de
+# código, y Diana no escribe código.
+_RELLENO_RE = re.compile(r" {8,}")
+SIN_RELLENO = ("Formato de tablas: escribe cada celda sin espacios de relleno, "
+               "como | a | b |. Nunca alinees columnas con espacios.")
+# Nombres internos de herramientas que un modelo chico a veces le muestra al
+# usuario ("dime y te ayudo con `fetch_expediente`").
+_NOMBRES_AMIGABLES = {
+    "fetch_expediente": "el expediente completo",
+    "leer_formula_legal": "la fórmula legal",
+    "buscar_proyectos": "la búsqueda de proyectos",
+    "rastrear_proyecto": "el estado del proyecto",
+    "fetch_comisiones": "el cuadro de comisiones",
+    "fetch_miembros_comision": "los integrantes de la comisión",
+}
+_NOMBRE_HERRAMIENTA_RE = re.compile(
+    r"`?\b((?:fetch|buscar|leer|rastrear|responder)_[a-z_]+)\b`?")
+_SEPARADOR_TABLA_RE = re.compile(r"^\s*\|\s*:?-{3,}", re.MULTILINE)
+
+
+def _listo_para_emitir(pendiente: str) -> bool:
+    """
+    Antes de mostrar la primera línea se espera a ver si la respuesta arranca
+    bien: hasta el separador de la primera tabla (|---|), o 600 caracteres si
+    no hay tabla. Así, si el modelo degenera en el encabezado de la tabla, se
+    puede generar de nuevo sin que el usuario vea el arranque repetido.
+    """
+    return bool(_SEPARADOR_TABLA_RE.search(pendiente)) or len(pendiente) >= 600
+
+
 def _quitar_razonamiento(texto: str) -> str:
     """Saca el razonamiento filtrado al comienzo de una respuesta, si lo hay."""
     if not _INICIO_RAZONAMIENTO_RE.match(texto):
@@ -983,6 +1066,7 @@ class ChatOrchestrator:
             })
 
     def _ajustar_args(self, name: str, args: dict) -> dict:
+        args = _corregir_numero_copiado(args, self.last_msg)
         if name != "buscar_proyectos":
             return args
         # El pedido decía "últimos N días": que el router no pierda la ventana.
@@ -1124,49 +1208,92 @@ class ChatOrchestrator:
             "\n".join(str(m.get("content") or "") for m in msgs + self.messages))
 
         def limpio(texto):
+            texto = _RELLENO_RE.sub(" ", texto)
+            texto = _NOMBRE_HERRAMIENTA_RE.sub(lambda m: _NOMBRES_AMIGABLES.get(m.group(1), "esa consulta"), texto)
             texto = _desenlazar(texto, permitidos)
             return _fix_nombres_reformateados(texto, nombres) if nombres else texto
 
-        pendiente = ""
         completo = ""
-        # Mientras el comienzo parezca razonamiento filtrado, no se emite nada:
-        # se decide al completarse la primera línea (o el final).
-        revisando_inicio = True
-        async for kind, payload in llm.stream(msgs, max_tokens=max_tokens):
-            if kind == "text":
-                # Siempre por línea: un link se limpia entero, nunca a medias.
-                pendiente += payload
-                if revisando_inicio:
-                    if "\n" not in pendiente and len(pendiente) < 300:
-                        continue
-                    if _INICIO_RAZONAMIENTO_RE.match(pendiente):
-                        continue  # se limpia completo al final
-                    revisando_inicio = False
-                corte = pendiente.rfind("\n")
-                if corte < 0 and len(pendiente) > 1500:
-                    # Párrafo larguísimo sin saltos: cortar en el último punto
-                    # para no retener todo; un nombre no lleva ". " adentro.
-                    corte = pendiente.rfind(". ")
-                if corte >= 0:
-                    listo, pendiente = pendiente[:corte + 1], pendiente[corte + 1:]
-                    listo = limpio(listo)
-                    completo += listo
-                    yield sse.text(listo)
-            elif kind == "status":
-                yield sse.status(payload)
-            elif kind == "error":
-                if pendiente:
-                    listo = limpio(pendiente)
-                    completo += listo
-                    yield sse.text(listo)
-                yield sse.error(payload)
-                return
+        aviso_corte = ""
+        # Segundo intento solo si el primero degeneró antes de mostrar nada.
+        # La instrucción va dentro del system existente: algunos proveedores
+        # no aceptan dos mensajes system.
+        reintento = ([{**msgs[0], "content": f"{msgs[0]['content']}\n\n{SIN_RELLENO}"}] + msgs[1:]
+                     if msgs and msgs[0].get("role") == "system" else msgs)
+        # 1) normal; 2) mismo proveedor con la instrucción de no rellenar;
+        # 3) otro proveedor de la cadena. Mistral degenera igual con la
+        # instrucción y con frequency_penalty (probado el 15/10/2026 en las
+        # tablas de agenda), así que el tercero saltea al que falló.
+        intentos = (msgs, reintento, reintento)
+        excluir: tuple = ()
+        for n_intento, msgs_intento in enumerate(intentos):
+            pendiente = ""
+            # Mientras el comienzo parezca razonamiento filtrado, no se emite
+            # nada: se decide al completarse la primera línea (o el final).
+            revisando_inicio = True
+            degenerado = False
+            info: dict = {}
+            gen = llm.stream(msgs_intento, max_tokens=max_tokens, excluir=excluir, info=info)
+            try:
+                async for kind, payload in gen:
+                    if kind == "text":
+                        # Siempre por línea: un link se limpia entero, nunca a medias.
+                        pendiente += payload
+                        if _DEGENERADO in pendiente[-(len(payload) + len(_DEGENERADO)):]:
+                            degenerado = True
+                            break
+                        if not completo and not _listo_para_emitir(pendiente):
+                            continue
+                        if revisando_inicio:
+                            if "\n" not in pendiente and len(pendiente) < 300:
+                                continue
+                            if _INICIO_RAZONAMIENTO_RE.match(pendiente):
+                                continue  # se limpia completo al final
+                            revisando_inicio = False
+                        corte = pendiente.rfind("\n")
+                        if corte < 0 and len(pendiente) > 1500:
+                            # Párrafo larguísimo sin saltos: cortar en el último punto
+                            # para no retener todo; un nombre no lleva ". " adentro.
+                            corte = pendiente.rfind(". ")
+                        if corte >= 0:
+                            listo, pendiente = pendiente[:corte + 1], pendiente[corte + 1:]
+                            listo = limpio(listo)
+                            completo += listo
+                            yield sse.text(listo)
+                    elif kind == "status":
+                        yield sse.status(payload)
+                    elif kind == "error":
+                        if pendiente:
+                            listo = limpio(pendiente)
+                            completo += listo
+                            yield sse.text(listo)
+                        yield sse.error(payload)
+                        return
+            finally:
+                await gen.aclose()
+            if degenerado:
+                logger.warning("Respuesta degenerada (relleno de espacios), intento=%d, ya emitido=%d",
+                               n_intento + 1, len(completo))
+                if not completo and n_intento == 0:
+                    yield sse.status("La respuesta salió mal formada, generándola de nuevo...")
+                    continue
+                if not completo and n_intento == 1 and info.get("proveedor") and \
+                        len(llm.provider_chain()) > len(excluir) + 1:
+                    excluir = excluir + (info["proveedor"],)
+                    yield sse.status("Probando con otro proveedor de IA...")
+                    continue
+                pendiente = pendiente.rstrip()
+                aviso_corte = ("\n\n*La respuesta se cortó porque el modelo generó texto mal "
+                               "formado. Vuelve a preguntar o cambia de proveedor en Ajustes.*")
+            break
         if pendiente:
             if revisando_inicio:
                 pendiente = _quitar_razonamiento(pendiente)
             listo = limpio(pendiente)
             completo += listo
             yield sse.text(listo)
+        if aviso_corte:
+            yield sse.text(aviso_corte)
         aviso = self._verificar_citas(completo, msgs)
         if aviso:
             yield sse.text(aviso)
@@ -1316,23 +1443,31 @@ class ChatOrchestrator:
     async def _armar_cuadro_por_temas(self) -> str | None:
         items = [p for p in self.proyectos_items if p.get("numero")]
         numeros = [p["numero"] for p in items]
-        lista = "\n".join(f"{p['numero']} | {p.get('titulo') or ''}" for p in items)
+        # Ids cortos en vez del número completo: la respuesta baja de ~8 mil
+        # a ~1 mil caracteres (Mistral tardaba 45-220 s en escribir los 138
+        # números y a veces cerraba mal el JSON).
+        lista = "\n".join(f"{i} | {p.get('titulo') or ''}" for i, p in enumerate(items, 1))
         msgs = [{"role": "system", "content": PROMPT_CLASIFICAR},
                 {"role": "user", "content": f"Pedido del usuario: {self.last_msg}\n\n{lista}"}]
-        texto = ""
-        try:
-            async for kind, payload in llm.stream(msgs, max_tokens=8000, temperature=0.1):
-                if kind == "text":
-                    texto += payload
-                elif kind == "error":
-                    logger.warning("clasificación por temas falló: %s", payload)
-                    return None
-        except Exception as e:
-            logger.warning("clasificación por temas falló: %s", e)
-            return None
-        clasificacion = _parsear_clasificacion(texto, numeros)
+        clasificacion = None
+        for intento in range(2):
+            texto = ""
+            try:
+                async for kind, payload in llm.stream(msgs, max_tokens=4000, temperature=0.1):
+                    if kind == "text":
+                        texto += payload
+                    elif kind == "error":
+                        logger.warning("clasificación por temas falló: %s", payload)
+                        return None
+            except Exception as e:
+                logger.warning("clasificación por temas falló: %s", e)
+                return None
+            clasificacion = _parsear_clasificacion(texto, numeros)
+            if clasificacion is not None:
+                break
+            logger.warning("clasificación por temas sin JSON válido (intento %d): %r",
+                           intento + 1, texto[:300])
         if clasificacion is None:
-            logger.warning("clasificación por temas sin JSON válido; se usa la respuesta libre")
             return None
         grupos, lectura = clasificacion
         return _cuadro_por_temas(items, grupos, lectura, self.proyectos_total)

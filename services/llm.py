@@ -342,7 +342,8 @@ async def _deltas(provider, messages, *, role, max_tokens, temperature, meta=Non
         await stream.close()
 
 
-async def stream(messages, *, role="main", max_tokens=2048, temperature=0.4):
+async def stream(messages, *, role="main", max_tokens=2048, temperature=0.4,
+                 excluir: tuple = (), info: dict | None = None):
     """
     Respuesta en streaming con reintento sobre rate limit y cambio de
     proveedor si el activo falla, se cuelga o se queda sin cuota.
@@ -350,8 +351,14 @@ async def stream(messages, *, role="main", max_tokens=2048, temperature=0.4):
     Emite tuplas ("text", delta), ("status", mensaje) o ("error", mensaje).
     Solo se cambia de proveedor si todavía no salió texto: a mitad de una
     respuesta, empezar otra de cero la duplicaría en pantalla.
+
+    `excluir` saltea proveedores (el orquestador lo usa cuando uno devolvió
+    texto inservible). En `info["proveedor"]` queda el que respondió.
     """
-    chain = provider_chain()
+    chain = [p for p in provider_chain() if p not in excluir]
+    if not chain:
+        yield ("error", "No hay otro proveedor de IA configurado para reintentar.")
+        return
     primary_exc = None
     for i, provider in enumerate(chain):
         if i > 0:
@@ -381,6 +388,8 @@ async def stream(messages, *, role="main", max_tokens=2048, temperature=0.4):
                         # eso por respuesta dejaba al usuario sin nada.
                         raise RespuestaVacia(f"{provider} {model} terminó sin texto") from None
                     emitted = True
+                    if info is not None:
+                        info["proveedor"] = provider
                     yield ("text", first)
                     async for delta in deltas:
                         yield ("text", delta)

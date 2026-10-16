@@ -475,7 +475,7 @@ def test_citas_no_verificadas_detecta_proyectos_y_links_inventados():
 async def test_respuesta_con_proyecto_inventado_lleva_advertencia():
     orch = ChatOrchestrator([user("hola")])
 
-    async def fake_stream(msgs, max_tokens):
+    async def fake_stream(msgs, max_tokens, **k):
         yield ("text", "El proyecto 01234-2026-2031-CD trata de salud mental.")
 
     with patch("services.orchestrator.llm.stream", fake_stream):
@@ -518,7 +518,7 @@ async def test_con_nombres_de_congresistas_igual_transmite_en_vivo():
     orch.tool_msgs = [{"role": "user",
                        "content": 'Datos: {"items": [{"autor": "Juan Pérez García"}]}'}]
 
-    async def fake_stream(msgs, max_tokens):
+    async def fake_stream(msgs, max_tokens, **k):
         yield ("text", "| Proyecto | Autor |\n|---|---|\n")
         yield ("text", "| 1 | Pérez García, Juan |\n")
         yield ("text", "Fin.")
@@ -728,8 +728,8 @@ async def test_cuadro_por_temas_lo_arma_el_codigo():
     orch.proyectos_items = [{"numero": f"{i:05d}-2026-2031-CD", "titulo": f"T{i}",
                              "fecha_presentacion": "15/10/2026", "enlace": f"https://e/{i}"}
                             for i in range(20)]
-    respuesta = json.dumps({"grupos": [{"tema": "Todo", "numeros": [
-        p["numero"] for p in orch.proyectos_items]}], "lectura": "L."})
+    respuesta = json.dumps({"grupos": [{"tema": "Todo", "ids": list(range(1, 21))}],
+                            "lectura": "L."})
 
     async def fake_stream(*a, **k):
         yield ("text", respuesta)
@@ -772,3 +772,82 @@ def test_resumen_separa_proyectos_de_la_semana_y_de_contexto():
     assert [p["numero"] for p in r["contexto_vigente"]] == ["00534-2026-2031-CD"]
     assert "autor" not in r["proposiciones_de_la_semana"][0]
     assert r["fuente"] == "SPLEY" and "items" not in r
+
+
+@pytest.mark.asyncio
+async def test_respuesta_con_relleno_de_espacios_se_genera_de_nuevo():
+    # Mistral, 15/10/2026: "| Fecha       | Hora     | Sesión" y miles de
+    # espacios hasta agotar max_tokens. El primer intento se descarta sin
+    # mostrar nada y el segundo sale bien.
+    orch = make([user("agenda de comisiones del senado")])
+    llamadas = []
+
+    def fake_stream(msgs, **k):
+        llamadas.append(msgs)
+        async def gen():
+            if len(llamadas) == 1:
+                yield ("text", "## Agenda\n\n| Fecha       | Hora")
+                for _ in range(50):
+                    yield ("text", " " * 40)
+            else:
+                yield ("text", "## Agenda\n\n| Fecha | Hora |\n|---|---|\n| 15/10 | 11:00 AM |\n")
+        return gen()
+
+    with patch("services.orchestrator.llm.stream", fake_stream):
+        eventos = [ev async for ev in orch._stream_final(
+            [{"role": "system", "content": "S"}, user("x")], 1000)]
+    texto = "".join(json.loads(e[6:])["text"] for e in eventos
+                    if e.startswith("data: {") and '"text"' in e)
+    assert len(llamadas) == 2
+    assert "Nunca alinees columnas" in llamadas[1][0]["content"]
+    assert texto.count("## Agenda") == 1
+    assert "| 15/10 | 11:00 AM |" in texto
+    assert "     " not in texto
+
+
+@pytest.mark.asyncio
+async def test_relleno_dos_veces_pasa_a_otro_proveedor():
+    orch = make([user("agenda de comisiones del senado")])
+    llamadas = []
+
+    def fake_stream(msgs, *, excluir=(), info=None, **k):
+        llamadas.append(excluir)
+        async def gen():
+            if "mistral" not in excluir:
+                info["proveedor"] = "mistral"
+                yield ("text", "| Fecha       | Hora" + " " * 200)
+            else:
+                info["proveedor"] = "groq"
+                yield ("text", "| Fecha | Hora |\n|---|---|\n| 15/10 | 11:00 AM |\n")
+        return gen()
+
+    with patch("services.orchestrator.llm.stream", fake_stream), \
+         patch("services.orchestrator.llm.provider_chain", return_value=["mistral", "groq"]):
+        eventos = [ev async for ev in orch._stream_final(
+            [{"role": "system", "content": "S"}, user("x")], 1000)]
+    texto = "".join(json.loads(e[6:])["text"] for e in eventos
+                    if e.startswith("data: {") and '"text"' in e)
+    assert llamadas == [(), (), ("mistral",)]
+    assert "| 15/10 | 11:00 AM |" in texto
+    assert "se cortó" not in texto
+
+
+def test_parsear_clasificacion_por_ids_y_json_roto():
+    numeros = ["001-CD", "002-CD", "003-CD"]
+    grupos, _ = _parsear_clasificacion('{"grupos": [{"tema": "A", "ids": [1, 3, 9]}]}', numeros)
+    assert grupos == [("A", ["001-CD", "003-CD"]), ("Otros", ["002-CD"])]
+    # Coma de más y comillas sin escapar en la lectura: se rescatan los grupos.
+    roto = '{"grupos": [{"tema": "A", "ids": [1, 2]}, {"tema": "B", "ids": [3]},], "lectura": "dice "hola""}'
+    grupos, _ = _parsear_clasificacion(roto, numeros)
+    assert grupos == [("A", ["001-CD", "002-CD"]), ("B", ["003-CD"])]
+
+
+def test_router_con_numero_mal_copiado_usa_el_del_pedido():
+    from services.orchestrator import _corregir_numero_copiado
+    pedido = "Resume la fórmula legal del proyecto de ley 14864/2025-CR"
+    assert _corregir_numero_copiado({"numero_proyecto": "148864/2025-CR"}, pedido) == {
+        "numero_proyecto": "14864/2025-CR"}
+    assert _corregir_numero_copiado({"numero_proyecto": "14864/2025-CR"}, pedido) == {
+        "numero_proyecto": "14864/2025-CR"}
+    # Sin número en el pedido (viene del historial) no se toca.
+    assert _corregir_numero_copiado({"numero_proyecto": "588"}, "¿y ese?") == {"numero_proyecto": "588"}
