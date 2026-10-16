@@ -55,7 +55,7 @@ jobs:
   build:
     needs: version
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         include:
           # Cada arquitectura se compila en su propia máquina: el servidor
@@ -118,7 +118,9 @@ jobs:
           # 2) La app completa, que levanta su propio servidor.
           DIANA_PORT=8790 DIANA_USER_DATA="$RUNNER_TEMP/ud" "$APP/Contents/MacOS/Diana" > "$RUNNER_TEMP/app.log" 2>&1 &
           ok=""
-          for i in $(seq 1 90); do curl -sf http://127.0.0.1:8790/status && { ok=1; break; }; sleep 2; done
+          # La primera apertura de un .app nuevo es lenta: macOS lo revisa
+          # entero antes de ejecutarlo (en el runner arm64 tardó ~2 min).
+          for i in $(seq 1 180); do curl -sf http://127.0.0.1:8790/status && { ok=1; break; }; sleep 2; done
           pkill -f "MacOS/Diana" || true
           if [ -z "$ok" ]; then
             echo "::error::la app no levantó su servidor"
