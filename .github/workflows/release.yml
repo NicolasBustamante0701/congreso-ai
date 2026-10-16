@@ -107,15 +107,24 @@ jobs:
       - name: Prueba de arranque
         run: |
           APP="release/mac$([ '${{ matrix.arch }}' = arm64 ] && echo -arm64)/Diana.app"
-          ls -d "$APP"
           codesign --verify --deep --strict "$APP"
-          DIANA_PORT=8790 DIANA_USER_DATA="$RUNNER_TEMP/ud" "$APP/Contents/MacOS/Diana" &
-          for i in $(seq 1 90); do
-            curl -sf http://127.0.0.1:8790/status && break
-            sleep 2
-          done
-          curl -sf http://127.0.0.1:8790/status
-          kill %1 || true
+          lipo -archs "$APP/Contents/MacOS/Diana"
+          # 1) El servidor empaquetado solo.
+          (cd "$APP/Contents/Resources/server" && PORT=8791 ./server > "$RUNNER_TEMP/server-solo.log" 2>&1 &)
+          ok=""
+          for i in $(seq 1 60); do curl -sf http://127.0.0.1:8791/status && { ok=1; break; }; sleep 2; done
+          pkill -f "Resources/server/server" || true
+          [ -n "$ok" ] || { echo "::error::el servidor solo no respondió"; tail -60 "$RUNNER_TEMP/server-solo.log"; exit 1; }
+          # 2) La app completa, que levanta su propio servidor.
+          DIANA_PORT=8790 DIANA_USER_DATA="$RUNNER_TEMP/ud" "$APP/Contents/MacOS/Diana" > "$RUNNER_TEMP/app.log" 2>&1 &
+          ok=""
+          for i in $(seq 1 90); do curl -sf http://127.0.0.1:8790/status && { ok=1; break; }; sleep 2; done
+          pkill -f "MacOS/Diana" || true
+          if [ -z "$ok" ]; then
+            echo "::error::la app no levantó su servidor"
+            tail -60 "$RUNNER_TEMP/app.log"; tail -60 ~/Library/Logs/Diana/*.log 2>/dev/null
+            exit 1
+          fi
 
       - uses: actions/upload-artifact@v4
         with:
