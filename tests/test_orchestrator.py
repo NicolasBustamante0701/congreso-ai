@@ -18,9 +18,11 @@ from services.orchestrator import (
     RESUMEN_DIAS,
     RESUMEN_TOOLS,
     ChatOrchestrator,
+    _agenda_pleno_de_la_semana,
     _compactar_para_agrupado,
     _cuadro_por_temas,
     _detecta_proyectos_por_dias,
+    _mociones_de_la_semana,
     _parsear_clasificacion,
     _separar_por_semana,
 )
@@ -769,7 +771,7 @@ def test_resumen_separa_proyectos_de_la_semana_y_de_contexto():
     r = _separar_por_semana(resultado, "08/10/2026")
     assert [p["numero"] for p in r["proposiciones_de_la_semana"]] == [
         "00588-2026-2031-CD", "00559-2026-2031-CD"]
-    assert [p["numero"] for p in r["contexto_vigente"]] == ["00534-2026-2031-CD"]
+    assert [p["numero"] for p in r["_contexto_vigente"]] == ["00534-2026-2031-CD"]
     assert "autor" not in r["proposiciones_de_la_semana"][0]
     assert r["fuente"] == "SPLEY" and "items" not in r
 
@@ -851,3 +853,143 @@ def test_router_con_numero_mal_copiado_usa_el_del_pedido():
         "numero_proyecto": "14864/2025-CR"}
     # Sin número en el pedido (viene del historial) no se toca.
     assert _corregir_numero_copiado({"numero_proyecto": "588"}, "¿y ese?") == {"numero_proyecto": "588"}
+
+
+def test_resumen_no_usa_agenda_del_pleno_anterior_a_la_semana():
+    agenda = {"camara": "Cámara de Diputados", "titulo": "Agenda 06/10", "fecha": "06/10/2026",
+              "enlace": "https://e/a.pdf", "texto": "MOCIÓN DE INTERPELACIÓN ...",
+              "estructura": [{"seccion": "Dictamen"}],
+              "otras_agendas": [{"camara": "Senado", "fecha": "14/10/2026", "texto": "x"}],
+              "agendas_anteriores": [{"titulo": "vieja"}]}
+    r = _agenda_pleno_de_la_semana(agenda, "09/10/2026")
+    assert "texto" not in r and "estructura" not in r
+    assert r["anterior_a_la_semana"] and "06/10/2026" in r["nota"]
+    assert r["otras_agendas"][0]["texto"] == "x"   # la del 14/10 sí es de la semana
+    assert "agendas_anteriores" not in r
+
+
+def test_resumen_solo_mociones_de_la_semana():
+    r = _mociones_de_la_semana({"mociones_interpelacion": [
+        {"numero": "424", "fecha": "21/09/2026"}, {"numero": "500", "fecha": "10/10/2026"}],
+        "mociones_censura": [{"numero": "445", "fecha": "24/09/2026"}]}, "09/10/2026")
+    assert [m["numero"] for m in r["mociones_interpelacion"]] == ["500"]
+    assert r["mociones_censura"] == []
+    assert "2 mociones" in r["nota"]
+
+
+@pytest.mark.asyncio
+async def test_resumen_inserta_contexto_vigente_antes_de_la_agenda():
+    orch = make([user("__RESUMEN_SEMANAL__: general")])
+    orch.contexto_resumen = [{"numero": "00534-2026-2031-CD", "fecha_presentacion": "06/10/2026",
+                              "titulo": "PROPOSICIÓN X", "estado": "EN COMISIÓN",
+                              "enlace": "https://wb2server.congreso.gob.pe/spley-portal/#/diputados/expediente/2026/534"}]
+
+    def fake_stream(msgs, **k):
+        async def gen():
+            yield ("text", "# RESUMEN\n\n" + "x " * 400 + "\n\n## Agenda de sesiones\n- 16/10\n")
+        return gen()
+
+    with patch("services.orchestrator.llm.stream", fake_stream):
+        eventos = [ev async for ev in orch._stream_final([{"role": "system", "content": "S"}, user("x")], 1000)]
+    texto = "".join(json.loads(e[6:])["text"] for e in eventos if e.startswith("data: {") and '"text"' in e)
+    assert texto.index("## Contexto vigente") < texto.index("## Agenda de sesiones")
+    assert "00534-2026-2031-CD" in texto and "(06/10)" in texto
+    assert "no pude verificar" not in texto
+
+
+@pytest.mark.asyncio
+async def test_agenda_sin_ia_cuando_ningun_proveedor_responde():
+    orch = make([user("sesiones de comisiones de los próximos 2 días")])
+    orch.ultimos_resultados["fetch_agenda_comisiones"] = {"sesiones": [
+        {"fecha": "16/10/2026", "hora": "9:00 AM", "camara": "Bicameral (Senado y Diputados)",
+         "tema": "Sesión de la Comisión Bicameral de Presupuesto", "organiza": "Comisión de Presupuesto",
+         "lugar": "Palacio Legislativo. Hemiciclo", "es_comision": True,
+         "enlace": "https://comunicaciones.congreso.gob.pe/agenda/2026/10/16/"},
+        {"fecha": "16/10/2026", "hora": "6:00 PM", "camara": "Cámara de Diputados", "tema": "Conferencia",
+         "organiza": "Diputado X", "lugar": "Sala", "es_comision": False, "enlace": "https://e"}],
+        "avisos": [{"aviso": "Semana de Representación"}]}
+
+    def fake_stream(msgs, **k):
+        async def gen():
+            yield ("error", "Groq tardó demasiado en responder.")
+        return gen()
+
+    with patch("services.orchestrator.llm.stream", fake_stream):
+        eventos = [ev async for ev in orch._stream_final([{"role": "system", "content": "S"}, user("x")], 1000)]
+    texto = "".join(json.loads(e[6:])["text"] for e in eventos if e.startswith("data: {") and '"text"' in e)
+    assert not any('"error"' in e for e in eventos)
+    assert "| 16/10 | 9:00 AM | Bicameral (Senado y Diputados) | Comisión de Presupuesto |" in texto
+    assert "Palacio Legislativo. Hemiciclo" in texto
+    assert "Otras actividades" in texto and "Semana de Representación" in texto
+
+
+def test_nombre_de_la_comision_sale_de_quien_organiza():
+    from services.orchestrator import _nombre_comision
+    assert _nombre_comision({"organiza": "Comisión de Inclusión Social, Familia, Mujer y Pueblos "
+                             "Andinos, Amazónicos y Afroperuanos Presidenta: Diputada Flor Meza Rivera"}) == (
+        "Comisión de Inclusión Social, Familia, Mujer y Pueblos Andinos, Amazónicos y Afroperuanos")
+    assert _nombre_comision({"organiza": "Comisión de Presupuesto y Cuenta General de la República. "
+                             "Presidente: Senador José Arista"}) == (
+        "Comisión de Presupuesto y Cuenta General de la República")
+    assert _nombre_comision({"organiza": "Senador X", "tema": "Sesión de la Comisión de Constitución (Continuación)"}) == (
+        "Comisión de Constitución")
+
+
+def test_tabla_agenda_ordena_por_fecha_y_hora():
+    from services.orchestrator import _tabla_agenda
+    base = {"camara": "Senado", "organiza": "Comisión X", "lugar": "Sala", "es_comision": True, "enlace": "https://e"}
+    md = _tabla_agenda({"sesiones": [
+        {**base, "fecha": "16/10/2026", "hora": "1:30 PM", "tema": "C"},
+        {**base, "fecha": "16/10/2026", "hora": "9:00 AM", "tema": "B"},
+        {**base, "fecha": "16/10/2026", "hora": "8:30 AM", "tema": "A"},
+        {**base, "fecha": "15/10/2026", "hora": "4:00 PM", "tema": "Z"}]}, True)
+    filas = [l for l in md.splitlines() if l.startswith("| 1")]
+    assert [f.split("|")[5].strip() for f in filas] == ["Z", "A", "B", "C"]
+
+
+def test_agenda_del_pleno_sin_camara_nombrada_no_prioriza_congreso():
+    orch = make([user("Dame un resumen de la estructura de la Agenda del Pleno (cuántos dictámenes)")])
+    assert orch._ajustar_args("fetch_agenda_pleno", {"camara": "congreso"}) == {}
+    orch = make([user("la última agenda del pleno del Senado")])
+    assert orch._ajustar_args("fetch_agenda_pleno", {"camara": "senado"}) == {"camara": "senado"}
+
+
+def test_interpelaciones_sin_ministro_nombrado_no_filtra():
+    orch = make([user("Indicame si se ha presentado alguna moción de interpelación a algún Ministro")])
+    assert orch._ajustar_args("fetch_interpelaciones", {"ministro": "Interior"}) == {}
+    orch = make([user("¿hay interpelación al ministro del Interior?")])
+    assert orch._ajustar_args("fetch_interpelaciones", {"ministro": "Interior"}) == {"ministro": "Interior"}
+
+
+def test_citas_acepta_numeros_listados_con_de_anio():
+    from services.orchestrator import _citas_no_verificadas
+    fuentes = "Segunda mesa técnica “Evaluación Jurídica de las Propuestas Legislativas: 0008, 0013 y 0016 de 2026”."
+    nums, _ = _citas_no_verificadas("Analiza la 0016-2026-2031-CD y la 0013-2026-2031-CD", fuentes)
+    assert nums == []
+    nums, _ = _citas_no_verificadas("y la 0017-2026-2031-CD", fuentes)
+    assert nums == ["0017-2026-2031-CD"]
+
+
+@pytest.mark.asyncio
+async def test_relleno_a_mitad_de_respuesta_se_continua():
+    orch = make([user("estatus del 14864/2025-CR")])
+    llamadas = []
+
+    def fake_stream(msgs, **k):
+        llamadas.append(msgs)
+        async def gen():
+            if len(llamadas) == 1:
+                yield ("text", "## Ficha\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\n### Seguimiento\n\n")
+                yield ("text", "| FECHA       | ESTADO" + " " * 200)
+            else:
+                yield ("text", "| FECHA | ESTADO |\n|---|---|\n| 22/07/2026 | PRESENTADO |\n")
+        return gen()
+
+    with patch("services.orchestrator.llm.stream", fake_stream):
+        eventos = [ev async for ev in orch._stream_final([{"role": "system", "content": "S"}, user("x")], 1000)]
+    texto = "".join(json.loads(e[6:])["text"] for e in eventos if e.startswith("data: {") and '"text"' in e)
+    assert len(llamadas) == 2
+    assert llamadas[1][-2]["role"] == "assistant" and "### Seguimiento" in llamadas[1][-2]["content"]
+    assert texto.count("## Ficha") == 1
+    assert "| 22/07/2026 | PRESENTADO |" in texto
+    assert "se cortó" not in texto and "     " not in texto

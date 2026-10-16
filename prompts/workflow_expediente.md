@@ -7,6 +7,7 @@ Reglas base para todo lo que sigue:
 3. Van todas las filas de todas las tablas, sin excepción — nada de "entre otros" ni resúmenes.
 4. Las 5 pestañas van siempre en la respuesta, aunque estén vacías: vacío también es información.
 5. Si "seguimiento", "proyectos_acumulados", "documentacion_anexa", "secciones" u "opinion_ciudadana" vinieron vacíos o ausentes, escribe esa sección con "Sin registros." — no es lo mismo que inventar que hay datos.
+6. Si la herramienta devolvió error o sin_datos (el portal no respondió), dilo en una línea y sugiere reintentar en unos minutos. No armes la ficha, no supongas en qué cámara está y nunca escribas un número de proyecto distinto al que pidió el usuario (como un posible número en el Senado).
 
 ---
 

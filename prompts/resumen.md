@@ -17,8 +17,8 @@ no 7): un proyecto recién presentado normalmente sigue "PRESENTADO" sin
 resolver por semanas, así que mostrarlo como contexto vigente aunque tenga
 más de 7 días es útil y de bajo riesgo — es el mismo criterio que usaría un
 asesor político real armando un briefing, no solo una foto literal de la
-semana. Los que caen entre 8 y 15 días van en "Contexto vigente" (ver formato
-más abajo), NUNCA mezclados con los hallazgos "de esta semana" — su fecha real
+semana. Los que caen entre 8 y 15 días van en "Contexto vigente" (la arma el
+sistema), NUNCA mezclados con los hallazgos "de esta semana" — su fecha real
 tiene que quedar explícita. El resto de las fuentes (interpelaciones,
 noticias, destacados) SÍ se cortan estrictos en 7 días: a diferencia de un
 proyecto recién presentado, una interpelación o noticia de hace semanas puede
@@ -27,17 +27,15 @@ presentarla como "vigente" sin poder confirmarlo es el error real a evitar.
 
 **Hoy es {hoy}. La semana que debes resumir va del {desde} al {hoy}.**
 
-Los proyectos ya vienen separados por fecha: `proposiciones_de_la_semana`
-(presentados desde el {desde}) van en las secciones por tema;
-`contexto_vigente` (anteriores) solo puede ir en "Contexto vigente". Nunca
-pases uno de `contexto_vigente` a una sección de tema, ni con una nota
-aclaratoria.
+Los proyectos que recibes en `proposiciones_de_la_semana` son todos de la
+semana (desde el {desde}): van en las secciones por tema. No escribas la
+sección "Contexto vigente": la agrega el sistema con los de 8 a 15 días.
 
 ## ⚠️ REGLA DE FECHA — LA MÁS IMPORTANTE DE TODAS
 
 Este informe cubre ÚNICAMENTE hechos ocurridos entre el {desde} y el {hoy} —
 con la única excepción de proyectos de ley de hasta 15 días, que van
-etiquetados aparte en "Contexto vigente" (ver arriba y el formato más abajo).
+etiquetados aparte en "Contexto vigente", sección que arma el sistema.
 
 - Antes de incluir cualquier noticia, sesión, documento o interpelación, mira
   su fecha. Si es anterior al {desde}, **descártalo**. No lo menciones, no lo
@@ -121,14 +119,6 @@ sugieren juntos — no solo los listes.]
 
 ## [Nombre del tema 2]
 [repetir el mismo formato]
-
-## Contexto vigente
-[Solo proyectos de ley entre 8 y 15 días de antigüedad — el resto de las
-fuentes NO va acá, se descarta si está fuera de la semana estricta. Si no hay
-ninguno, omite esta sección completa, no la dejes vacía.]
-- **[numero]** ([fecha de presentación real, dd/mm]) — [sumilla, en una
-  línea] — sigue en trámite ([estado real, ej. PRESENTADO]) — [Ver
-  fuente](URL exacta)
 
 ## Agenda de sesiones
 ⚠️ Usa SOLO lo que devolvieron fetch_agenda_pleno y la agenda de sesiones de

@@ -271,3 +271,14 @@ def test_indice_de_comisiones_de_diputados():
     assert not any(n.lower().startswith("comisión especial") for n in indice)
     # Solo páginas del portal de la cámara: los visores de wb2server quedan afuera.
     assert all(u.startswith("https://diputados.congreso.gob.pe/") for u in indice.values())
+
+
+def test_parsear_agenda_tema_largo_y_comision_bicameral():
+    html = (FIXTURES / "agenda-comunicaciones-2026-10-16.html").read_text()
+    sesiones, _ = _parsear_agenda_dia(html, date(2026, 10, 16), "https://x/")
+    bicameral = next(s for s in sesiones if "Bicameral" in s["tema"])
+    assert bicameral["camara"] == "Bicameral (Senado y Diputados)"
+    assert bicameral["lugar"] == "Palacio Legislativo. Hemiciclo de Sesiones"
+    assert "Senador José Arista" in bicameral["organiza"]
+    assert "Año Fiscal 2027" in bicameral["tema"]
+    assert all(s["lugar"] for s in sesiones)

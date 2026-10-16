@@ -14,6 +14,8 @@ Ordena por fecha y hora. Agrupa visualmente por cámara si hay varias del mismo 
 
 Cada sesión trae `es_comision`. Si el usuario pide **comisiones**, la tabla lleva SOLO las de `es_comision=true`; las demás (homenajes, iluminaciones, eventos) van aparte en una línea "Otras actividades del día", nunca como si fueran sesiones de comisión. Si no hay ninguna con `es_comision=true`, dilo así aunque haya otras actividades. Cada sesión trae también `enlace` (la agenda oficial del día) y, si existe, `documento` (el PDF con la agenda de esa sesión puntual): en la columna Lugar o debajo de la tabla, enlaza el `documento` de cada sesión de comisión.
 
+Las sesiones con cámara "Bicameral (Senado y Diputados)" (ej. la Comisión Bicameral de Presupuesto) son de las dos cámaras: inclúyelas siempre, pidan Senado o Diputados.
+
 Si vienen `avisos` (bloques sin hora, como "Semana de Representación del lunes 12 al viernes 16"), menciónalos en una línea: explican por qué hay pocas sesiones o ninguna.
 
 ### Mi lectura

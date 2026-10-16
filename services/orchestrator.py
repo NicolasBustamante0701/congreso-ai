@@ -87,6 +87,12 @@ _LISTAS_CRONOLOGICAS = ("seguimiento",)
 _NUM_EN_PEDIDO_RE = re.compile(r"\b0*(\d{2,5})\s*[-/]\s*\d{4}(?:\s*-\s*\d{4})?\s*-\s*[A-Za-z]{1,2}\b")
 
 
+def _sin_acentos_min(texto: str) -> str:
+    import unicodedata
+    return "".join(c for c in unicodedata.normalize("NFD", texto.lower())
+                   if unicodedata.category(c) != "Mn")
+
+
 def _corregir_numero_copiado(args: dict, pedido: str) -> dict:
     """
     Si el router copió mal el número de proyecto que el usuario escribió, se
@@ -246,12 +252,147 @@ def _separar_por_semana(resultado, desde: str):
             continue   # sin fecha no se puede ubicar en ninguna ventana
         (semana if fecha >= corte else contexto).append(fila)
     otros = {k: v for k, v in resultado.items() if k not in ("items", "total")}
+    # Las de contexto no se le pasan al modelo: con la lista delante, Gemini
+    # y Mistral igual las mezclaban en los temas de la semana (16/10/2026).
+    # La sección "Contexto vigente" la arma el código (_bloque_contexto).
     return {**otros,
             "proposiciones_de_la_semana": semana,
-            "contexto_vigente": contexto,
-            "nota": (f"\"proposiciones_de_la_semana\" son las presentadas desde el {desde}: "
-                     "van en las secciones por tema. \"contexto_vigente\" son anteriores: "
-                     "solo pueden ir en la sección Contexto vigente, nunca en los temas.")}
+            "_contexto_vigente": contexto,
+            "nota": (f"\"proposiciones_de_la_semana\" son todas las presentadas desde el "
+                     f"{desde}. No escribas la sección \"Contexto vigente\": la agrega el sistema.")}
+
+
+MAX_CONTEXTO = 8
+
+
+def _bloque_contexto(contexto: list[dict]) -> str:
+    """Sección "Contexto vigente" del resumen, con las proposiciones de 8 a 15 días."""
+    if not contexto:
+        return ""
+    lineas = ["## Contexto vigente",
+              "Proposiciones de la semana anterior que siguen en trámite:"]
+    for p in contexto[:MAX_CONTEXTO]:
+        titulo = " ".join(str(p.get("titulo") or "").split())
+        num = f"[{p['numero']}]({p['enlace']})" if p.get("enlace") else p["numero"]
+        fecha = (p.get("fecha_presentacion") or "")[:5]
+        estado = p.get("estado") or "en trámite"
+        lineas.append(f"- **{num}** ({fecha}) — {titulo.capitalize()} — {estado}")
+    if len(contexto) > MAX_CONTEXTO:
+        lineas.append(f"- Y {len(contexto) - MAX_CONTEXTO} más en el periodo, consultables en SPLEY.")
+    return "\n".join(lineas) + "\n\n"
+
+
+def _fecha(texto) -> "datetime.date | None":
+    try:
+        return datetime.strptime(str(texto or "")[:10], "%d/%m/%Y").date()
+    except ValueError:
+        return None
+
+
+def _agenda_pleno_de_la_semana(resultado, desde: str):
+    """
+    Agenda del Pleno para el resumen semanal: la que es anterior a la semana
+    queda solo como referencia, sin su contenido.
+
+    Con Mistral el resumen del 16/10/2026 presentaba la interpelación "del
+    Pleno del 6 de octubre" y las comisiones investigadoras de esa agenda
+    como actividad de la semana del 09/10 al 16/10, aunque el prompt lo
+    prohíbe.
+    """
+    corte = _fecha(desde)
+    if not isinstance(resultado, dict) or corte is None:
+        return resultado
+
+    def vieja(a):
+        f = _fecha(a.get("fecha"))
+        return f is not None and f < corte
+
+    def solo_referencia(a):
+        return {"camara": a.get("camara"), "titulo": a.get("titulo"), "fecha": a.get("fecha"),
+                "enlace": a.get("enlace"), "anterior_a_la_semana": True}
+
+    out = dict(resultado)
+    if vieja(resultado):
+        out = {**solo_referencia(resultado), "fuente": resultado.get("fuente"),
+               "nota": (f"La última Agenda del Pleno publicada es del {resultado.get('fecha')}, "
+                        f"anterior a la semana ({desde} en adelante): no hay agenda del Pleno "
+                        "de esta semana. No uses su contenido como actividad de la semana.")}
+    if isinstance(resultado.get("otras_agendas"), list):
+        out["otras_agendas"] = [solo_referencia(a) if vieja(a) else a
+                                for a in resultado["otras_agendas"]]
+    out.pop("agendas_anteriores", None)
+    return out
+
+
+def _mociones_de_la_semana(resultado, desde: str):
+    """Interpelaciones y censuras del resumen: solo las presentadas en la semana."""
+    corte = _fecha(desde)
+    if not isinstance(resultado, dict) or corte is None:
+        return resultado
+    out = dict(resultado)
+    descartadas = 0
+    for clave in ("mociones_interpelacion", "mociones_censura"):
+        if isinstance(resultado.get(clave), list):
+            dentro = [m for m in resultado[clave] if (_fecha(m.get("fecha")) or corte) >= corte]
+            descartadas += len(resultado[clave]) - len(dentro)
+            out[clave] = dentro
+    if descartadas:
+        out["nota"] = (f"Se quitaron {descartadas} mociones presentadas antes del {desde}: "
+                       "no son de esta semana.")
+    return out
+
+
+def _nombre_comision(sesion: dict) -> str:
+    """La comisión que organiza, sin la línea de la presidencia."""
+    for texto in (sesion.get("organiza") or "", sesion.get("tema") or ""):
+        m = re.search(r"Comisi[oó]n [^.(]*?(?=\s+President[ea]:|\s*\(|\.|$)", texto)
+        if m:
+            return m.group(0).strip()
+    return " ".join((sesion.get("organiza") or "—").split())[:80]
+
+
+def _tabla_agenda(datos: dict, solo_comisiones: bool) -> str:
+    """Sesiones de la agenda oficial como tabla, más otras actividades y avisos."""
+    sesiones = datos.get("sesiones") or []
+    def orden(s):
+        m = re.match(r"(\d{1,2}):(\d{2})\s*([AP]M)?", s.get("hora") or "", re.IGNORECASE)
+        h, mi = (int(m.group(1)), int(m.group(2))) if m else (99, 0)
+        if m and m.group(3):
+            h = h % 12 + (12 if m.group(3).upper() == "PM" else 0)
+        f = s.get("fecha") or ""
+        return f[6:] + f[3:5] + f[:2], h, mi
+
+    sesiones = sorted(sesiones, key=orden)
+    tabla = [s for s in sesiones if s.get("es_comision")] if solo_comisiones else sesiones
+    otras = [s for s in sesiones if not s.get("es_comision")] if solo_comisiones else []
+
+    def celda(t, tope=None):
+        t = " ".join(str(t or "—").replace("|", "/").split())
+        return t if not tope or len(t) <= tope else t[:tope].rsplit(" ", 1)[0] + "…"
+
+    partes = []
+    if tabla:
+        fechas = sorted({s["fecha"] for s in tabla}, key=lambda f: f[6:] + f[3:5] + f[:2])
+        partes.append(f"## {'Sesiones de comisiones' if solo_comisiones else 'Agenda'} — "
+                      + ", ".join(f[:5] for f in fechas) + "\n")
+        partes.append("| Fecha | Hora | Cámara | Comisión | Tema | Lugar | Agenda |")
+        partes.append("|---|---|---|---|---|---|---|")
+        for s in tabla:
+            links = [f"[Agenda de la sesión]({s['documento']})"] if s.get("documento") else []
+            links.append(f"[Agenda del día]({s['enlace']})")
+            partes.append(f"| {s['fecha'][:5]} | {s['hora']} | {celda(s.get('camara'))} | "
+                          f"{celda(_nombre_comision(s))} | {celda(s.get('tema'), 220)} | "
+                          f"{celda(s.get('lugar'))} | {' · '.join(links)} |")
+    else:
+        partes.append("No hay sesiones de comisión en la agenda oficial de los días consultados.")
+    if otras:
+        partes.append("\n**Otras actividades del día** (no son sesiones de comisión):")
+        partes += [f"- {s['fecha'][:5]}, {s['hora']} — {celda(s.get('tema'), 150)} "
+                   f"({celda(s.get('organiza'), 70)})" for s in otras]
+    for a in datos.get("avisos") or []:
+        doc = f" ([documento oficial]({a['documento']}))" if a.get("documento") else ""
+        partes.append(f"\n**Aviso:** {a['aviso']}{doc}")
+    return "\n".join(partes) + "\n"
 
 
 def _recortar_resultado(nombre: str, resultado) -> str:
@@ -624,6 +765,9 @@ _DEGENERADO = " " * 120
 # Ningún markdown legítimo necesita 8 espacios seguidos fuera de un bloque de
 # código, y Diana no escribe código.
 _RELLENO_RE = re.compile(r" {8,}")
+CONTINUAR = ("La respuesta anterior se cortó. Continúa exactamente desde donde quedó, sin "
+             "repetir nada de lo ya escrito y sin saludar. Escribe las tablas sin espacios de "
+             "relleno, como | a | b |.")
 SIN_RELLENO = ("Formato de tablas: escribe cada celda sin espacios de relleno, "
                "como | a | b |. Nunca alinees columnas con espacios.")
 # Nombres internos de herramientas que un modelo chico a veces le muestra al
@@ -662,6 +806,9 @@ def _quitar_razonamiento(texto: str) -> str:
     return texto[m.start():] if m else texto
 
 
+_LISTA_NUMEROS_RE = re.compile(r"((?:\b\d{1,5}\s*(?:,|y|e)\s*)*\b\d{1,5})\s+de\s+(20\d\d)\b")
+
+
 def _clave_proyecto(m: re.Match) -> tuple:
     # "00434-2026-2031-CD" y "434-2026-2031-CD" son el mismo proyecto.
     sufijo = m.group(3).upper()
@@ -671,10 +818,16 @@ def _clave_proyecto(m: re.Match) -> tuple:
 def _citas_no_verificadas(respuesta: str, fuentes: str) -> tuple[list[str], list[str]]:
     """Números de proyecto y enlaces del Congreso que están en la respuesta pero no en las fuentes."""
     nums_ok = {_clave_proyecto(m) for m in NUM_PROYECTO_RE.finditer(fuentes)}
+    # "Propuestas Legislativas: 0008, 0013 y 0016 de 2026" (agenda del
+    # 16/10/2026): el modelo las escribe "0016-2026-2031-CD". Número y año
+    # están en la fuente; el sufijo, no.
+    sin_sufijo = {(int(n), anio) for lista, anio in _LISTA_NUMEROS_RE.findall(fuentes)
+                  for n in re.findall(r"\d{1,5}", lista)}
     links_ok = _links_permitidos(fuentes)
     nums, links = [], []
     for m in NUM_PROYECTO_RE.finditer(respuesta):
-        if _clave_proyecto(m) not in nums_ok and m.group(0) not in nums:
+        clave = _clave_proyecto(m)
+        if clave not in nums_ok and clave[:2] not in sin_sufijo and m.group(0) not in nums:
             nums.append(m.group(0))
     for u in LINK_CONGRESO_RE.findall(respuesta):
         u = u.rstrip(".,;:")
@@ -699,6 +852,9 @@ class ChatOrchestrator:
         self.is_resumen = False
         self.forzar_dias_proyectos: int | None = None
         self.proyectos_agrupados = False
+        self.contexto_resumen: list[dict] = []
+        self.tabla_agenda_mostrada = False
+        self.ultimos_resultados: dict = {}
         self.proyectos_items: list[dict] = []
         self.proyectos_total: int | None = None
         self.sector = None
@@ -1051,8 +1207,15 @@ class ChatOrchestrator:
 
         resultados = await asyncio.gather(*(una(n, a) for n, a in llamadas))
         for (name, _), result in zip(llamadas, resultados):
+            self.ultimos_resultados[name] = result
             if name == "buscar_proyectos" and self.is_resumen:
                 result = _separar_por_semana(result, self.desde)
+                if isinstance(result, dict):
+                    self.contexto_resumen = result.pop("_contexto_vigente", [])
+            elif name == "fetch_agenda_pleno" and self.is_resumen:
+                result = _agenda_pleno_de_la_semana(result, self.desde)
+            elif name == "fetch_interpelaciones" and self.is_resumen:
+                result = _mociones_de_la_semana(result, self.desde)
             elif name == "buscar_proyectos" and self.proyectos_agrupados:
                 result = _compactar_para_agrupado(result)
                 if isinstance(result, dict) and isinstance(result.get("items"), list):
@@ -1067,6 +1230,21 @@ class ChatOrchestrator:
 
     def _ajustar_args(self, name: str, args: dict) -> dict:
         args = _corregir_numero_copiado(args, self.last_msg)
+        if name == "fetch_interpelaciones" and args.get("ministro"):
+            # "¿Hay alguna moción contra algún ministro?": Mistral llamaba con
+            # ministro='Interior' y 'Salud' por su cuenta y se perdían las
+            # demás mociones (16/10/2026). El filtro vale si el usuario lo nombró.
+            if _sin_acentos_min(str(args["ministro"])) not in _sin_acentos_min(self.last_msg):
+                args = {k: v for k, v in args.items() if k != "ministro"}
+        if name == "fetch_agenda_pleno" and args.get("camara"):
+            # "Dame la estructura de la Agenda del Pleno" no nombra cámara,
+            # pero el router mandaba camara='congreso' y salía primero la del
+            # Congreso unicameral de junio (16/10/2026). Solo vale si el
+            # usuario la nombró.
+            raiz = {"congreso": "congres", "senado": "senad", "diputados": "diputad"}.get(
+                str(args["camara"]).lower().strip(), str(args["camara"]).lower()[:6])
+            if raiz not in self.last_msg.lower():
+                args = {k: v for k, v in args.items() if k != "camara"}
         if name != "buscar_proyectos":
             return args
         # El pedido decía "últimos N días": que el router no pierda la ventana.
@@ -1209,12 +1387,26 @@ class ChatOrchestrator:
 
         def limpio(texto):
             texto = _RELLENO_RE.sub(" ", texto)
+            if self.tabla_agenda_mostrada:
+                # La tabla ya la mostró el código: Mistral la repetía igual.
+                texto = re.sub(r"(?m)^\s*\|.*(?:\n|$)", "", texto)
             texto = _NOMBRE_HERRAMIENTA_RE.sub(lambda m: _NOMBRES_AMIGABLES.get(m.group(1), "esa consulta"), texto)
             texto = _desenlazar(texto, permitidos)
             return _fix_nombres_reformateados(texto, nombres) if nombres else texto
 
         completo = ""
         aviso_corte = ""
+        # Resumen semanal: la sección "Contexto vigente" la arma el código y
+        # va justo antes de "## Agenda de sesiones".
+        contexto = {"bloque": _bloque_contexto(self.contexto_resumen) if self.is_resumen else ""}
+
+        def con_contexto(texto):
+            if contexto["bloque"]:
+                m = re.search(r"(?m)^## Agenda de sesiones", texto)
+                if m:
+                    texto = texto[:m.start()] + contexto["bloque"] + texto[m.start():]
+                    contexto["bloque"] = ""
+            return texto
         # Segundo intento solo si el primero degeneró antes de mostrar nada.
         # La instrucción va dentro del system existente: algunos proveedores
         # no aceptan dos mensajes system.
@@ -1224,9 +1416,13 @@ class ChatOrchestrator:
         # 3) otro proveedor de la cadena. Mistral degenera igual con la
         # instrucción y con frequency_penalty (probado el 15/10/2026 en las
         # tablas de agenda), así que el tercero saltea al que falló.
-        intentos = (msgs, reintento, reintento)
+        intentos = [msgs, reintento, reintento]
         excluir: tuple = ()
-        for n_intento, msgs_intento in enumerate(intentos):
+        continuado = False
+        n_intento = -1
+        while n_intento + 1 < len(intentos):
+            n_intento += 1
+            msgs_intento = intentos[n_intento]
             pendiente = ""
             # Mientras el comienzo parezca razonamiento filtrado, no se emite
             # nada: se decide al completarse la primera línea (o el final).
@@ -1257,12 +1453,17 @@ class ChatOrchestrator:
                             corte = pendiente.rfind(". ")
                         if corte >= 0:
                             listo, pendiente = pendiente[:corte + 1], pendiente[corte + 1:]
-                            listo = limpio(listo)
+                            listo = con_contexto(limpio(listo))
                             completo += listo
                             yield sse.text(listo)
                     elif kind == "status":
                         yield sse.status(payload)
                     elif kind == "error":
+                        respaldo = "" if completo else self._respuesta_sin_ia()
+                        if respaldo:
+                            yield sse.text(respaldo)
+                            yield sse.DONE
+                            return
                         if pendiente:
                             listo = limpio(pendiente)
                             completo += listo
@@ -1282,6 +1483,21 @@ class ChatOrchestrator:
                     excluir = excluir + (info["proveedor"],)
                     yield sse.status("Probando con otro proveedor de IA...")
                     continue
+                respaldo = "" if completo else self._respuesta_sin_ia()
+                if respaldo:
+                    pendiente, revisando_inicio = respaldo, False
+                    break
+                if completo and not continuado:
+                    # Degeneró a mitad de camino (Mistral, en la segunda tabla
+                    # de un expediente: 16/10/2026). Lo mostrado no se puede
+                    # borrar: se le pide que siga desde ahí, sin relleno.
+                    continuado = True
+                    intentos.append(reintento + [
+                        {"role": "assistant", "content": completo},
+                        {"role": "user", "content": CONTINUAR}])
+                    n_intento = len(intentos) - 2
+                    yield sse.status("Completando la respuesta...")
+                    continue
                 pendiente = pendiente.rstrip()
                 aviso_corte = ("\n\n*La respuesta se cortó porque el modelo generó texto mal "
                                "formado. Vuelve a preguntar o cambia de proveedor en Ajustes.*")
@@ -1289,9 +1505,12 @@ class ChatOrchestrator:
         if pendiente:
             if revisando_inicio:
                 pendiente = _quitar_razonamiento(pendiente)
-            listo = limpio(pendiente)
+            listo = con_contexto(limpio(pendiente))
             completo += listo
             yield sse.text(listo)
+        if contexto["bloque"] and completo:
+            completo += "\n\n" + contexto["bloque"]
+            yield sse.text("\n\n" + contexto["bloque"])
         if aviso_corte:
             yield sse.text(aviso_corte)
         aviso = self._verificar_citas(completo, msgs)
@@ -1299,10 +1518,45 @@ class ChatOrchestrator:
             yield sse.text(aviso)
         yield sse.DONE
 
+    def _datos_agenda(self) -> dict | None:
+        datos = (self.ultimos_resultados.get("fetch_agenda_comisiones")
+                 or self.ultimos_resultados.get("fetch_agenda_camaras"))
+        return datos if isinstance(datos, dict) and datos.get("sesiones") else None
+
+    def _respuesta_sin_ia(self) -> str:
+        """
+        Agenda armada directo de los datos oficiales, para cuando ningún
+        proveedor de IA puede redactar (16/10/2026, con Mistral degenerando:
+        Groq sin responder, Gemini sin cuota y Cerebras pidiendo pago). Solo
+        para la agenda: es una tabla, no necesita redacción.
+        """
+        datos = self._datos_agenda()
+        if not datos or self.tabla_agenda_mostrada:
+            return ""
+        solo = bool("fetch_agenda_comisiones" in self.ultimos_resultados
+                    or re.search(r"comisi", self.last_msg, re.IGNORECASE))
+        return ("*Diana no pudo redactar la respuesta con IA en este momento "
+                "(proveedores saturados). Estos son los datos de la agenda oficial, tal cual:*\n\n"
+                + _tabla_agenda(datos, solo))
+
+    def _toca_tabla_agenda(self) -> bool:
+        """
+        Sesiones de comisión: la tabla la arma el código y la IA solo escribe
+        "Mi lectura". Mistral dejaba afuera la columna de la comisión (tomaba
+        literal "fecha, hora, lugar y link") o una sesión entera (16/10/2026).
+        """
+        return (not self.is_resumen and self._datos_agenda() is not None
+                and bool(re.search(r"comisi", self.last_msg, re.IGNORECASE))
+                and len(self.tools_usados) == 1)
+
     def _verificar_citas(self, respuesta: str, msgs: list) -> str:
         # Fuentes: lo que el modelo tuvo delante (resultados de herramientas,
         # PDF o transcript cargado, turnos anteriores ya verificados).
         fuentes = "\n".join(str(m.get("content") or "") for m in msgs + self.messages)
+        # La sección "Contexto vigente" la escribe el código con datos que el
+        # modelo no vio: también son fuente.
+        if self.contexto_resumen:
+            fuentes += "\n" + json.dumps(self.contexto_resumen, ensure_ascii=False)
         nums, links = _citas_no_verificadas(respuesta, fuentes)
         if not nums and not links:
             return ""
@@ -1423,6 +1677,20 @@ class ChatOrchestrator:
                 yield sse.text(cuadro)
                 yield sse.DONE
                 return
+
+        if self._toca_tabla_agenda():
+            solo = True
+            tabla = _tabla_agenda(self._datos_agenda(), solo)
+            yield sse.text(tabla + "\n")
+            self.tabla_agenda_mostrada = True
+            msgs = [{**msgs[0], "content": (
+                f"{msgs[0]['content']}\n\nYA SE LE MOSTRÓ AL USUARIO esta parte de la respuesta, "
+                f"armada con los datos oficiales:\n\n{tabla}\nAhora escribe SOLO la sección "
+                "\"### Mi lectura\": 2-3 líneas sobre qué sesión conviene seguir y por qué. No "
+                "repitas la tabla ni agregues otras secciones.")}] + msgs[1:]
+            async for ev in self._stream_final(msgs, 1500):
+                yield ev
+            return
 
         async for ev in self._stream_final(msgs, self._phase3_max_tokens()):
             yield ev

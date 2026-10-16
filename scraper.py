@@ -2508,6 +2508,15 @@ async def fetch_agenda_camaras(dias: int = 2, camara: str = None):
                               if pedido in _sin_acentos(s["camara"])
                               or (s["camara"] not in ("Senado", "Cámara de Diputados")
                                   and pedido in _sin_acentos(s["tema"]))]
+            # La Bicameral es de las dos cámaras. Con su etiqueta propia,
+            # Mistral la dejaba fuera de "comisiones de Diputados": se la
+            # rotula con la cámara pedida.
+            nombre_pedido = {"SENADO": "Senado", "DIPUTADOS": "Cámara de Diputados"}.get(
+                pedido.replace("CAMARA DE ", "").strip())
+            if nombre_pedido:
+                sesiones_total = [{**s, "camara": f"{nombre_pedido} (Comisión Bicameral)"}
+                                  if s["camara"].startswith("Bicameral") else s
+                                  for s in sesiones_total]
 
     if not sesiones_total:
         vacio = {
@@ -2524,6 +2533,14 @@ async def fetch_agenda_camaras(dias: int = 2, camara: str = None):
         "sesiones": sesiones_total,
         "total": len(sesiones_total),
     }
+    comisiones = sum(1 for x in sesiones_total if x["es_comision"])
+    if comisiones:
+        # Mistral dejaba afuera la sesión de la Bicameral cuando se pedía una
+        # cámara, aunque el prompt la incluye: dicho en los datos, la respeta.
+        resultado["instruccion"] = (
+            f"Hay {comisiones} sesiones con es_comision=true: todas van en la tabla de "
+            "sesiones de comisión, incluidas las de cámara 'Bicameral (Senado y Diputados)', "
+            "que son de las dos cámaras.")
     if avisos:
         resultado["avisos"] = avisos
     return resultado
@@ -2541,7 +2558,9 @@ _AGENDA_RUIDO = {"Descargar", "Portal", "Inicio", "Noticias"}
 # no encontraba ORGANIZA ni LUGAR y la sesión de Constitución del Senado salía
 # sin cámara, sin lugar y fuera del filtro "senado". El lugar sí se corta en
 # 2 porque en la última actividad del día lo sigue el pie de página.
-_AGENDA_TOPE = {"TEMA": 6, "ORGANIZA": 4, "LUGAR": 2}
+# La Bicameral de Presupuesto lista a sus invitados dentro del tema: 15
+# líneas el 16/10/2026. El tope del tema solo frena un HTML roto.
+_AGENDA_TOPE = {"TEMA": 40, "ORGANIZA": 4, "LUGAR": 2}
 _HORA_RE = re.compile(r"^\d{1,2}:\d{2}$")
 
 
@@ -2615,7 +2634,11 @@ def _parsear_agenda_dia(html: str, dia: date, url: str) -> tuple[list[dict], lis
         # Carlos Mesía"): el tema puede nombrar a la otra cámara ("remitida
         # por la Cámara de Diputados") y confundir la detección.
         camara = _detectar_camara(organiza)
-        if camara not in ("Senado", "Cámara de Diputados"):
+        # La Bicameral la preside un senador, pero es de las dos cámaras: así
+        # sale en los pedidos de "Senado" y de "Diputados".
+        if "BICAMERAL" in _sin_acentos(tema + " " + organiza):
+            camara = "Bicameral (Senado y Diputados)"
+        elif camara not in ("Senado", "Cámara de Diputados"):
             camara = _detectar_camara(tema + " " + organiza + " " + lugar)
         sesion = {
             "fecha": dia.strftime("%d/%m/%Y"),
