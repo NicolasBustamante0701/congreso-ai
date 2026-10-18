@@ -23,6 +23,8 @@ from scraper import fetch_transcript_youtube
 from services import documentos, llm, sse, tool_cache
 from services.observability import timed
 from services.prompt_registry import (
+    EXTENSIONES,
+    NOTA_EXTENSION,
     ROUTER_PROMPT,
     SYSTEM_MINI,
     WORKFLOW_PDF_FORMULA,
@@ -917,8 +919,10 @@ def _citas_no_verificadas(respuesta: str, fuentes: str) -> tuple[list[str], list
 class ChatOrchestrator:
     """Ejecuta una vuelta completa de conversación sobre el historial dado."""
 
-    def __init__(self, messages: list):
+    def __init__(self, messages: list, extension: str | None = None):
         self.messages = messages or []
+        # Largo de la respuesta: "corta", "media" (lo de siempre) o "larga".
+        self.extension = extension if extension in EXTENSIONES else "media"
         ahora = ahora_lima()
         self.hoy = ahora.strftime("%d/%m/%Y")
         # Ventana del resumen semanal: los 7 días que terminan hoy.
@@ -1456,7 +1460,8 @@ class ChatOrchestrator:
                 # tokens, más el razonamiento interno de Gemini.
                 return 24000
             return 14000 if chars > 12000 else 8000
-        return 4000
+        # Conversación libre: "larga" necesita más margen para no cortarse.
+        return 6000 if self.extension == "larga" else 4000
 
     async def _stream_final(self, msgs, max_tokens):
         """
@@ -1507,6 +1512,10 @@ class ChatOrchestrator:
                     contexto["bloque"] = ""
             return texto
         # Segundo intento solo si el primero degeneró antes de mostrar nada.
+        # Largo que eligió el usuario: afecta la redacción, no los datos.
+        nota = NOTA_EXTENSION.get(self.extension)
+        if nota and msgs and msgs[0].get("role") == "system":
+            msgs = [{**msgs[0], "content": f"{msgs[0]['content']}\n\n{nota}"}] + msgs[1:]
         # La instrucción va dentro del system existente: algunos proveedores
         # no aceptan dos mensajes system.
         reintento = ([{**msgs[0], "content": f"{msgs[0]['content']}\n\n{SIN_RELLENO}"}] + msgs[1:]

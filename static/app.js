@@ -62,6 +62,27 @@
     });
   }
   aplicarTema(temaGuardado());
+
+  // Largo de las respuestas: "corta" | "media" | "larga". El mismo valor en
+  // Ajustes y en el selector junto al chat; viaja en cada pedido a /chat.
+  const EXTENSION_KEY = 'diana_extension';
+  function extensionGuardada() {
+    try {
+      const v = localStorage.getItem(EXTENSION_KEY);
+      return ['corta', 'media', 'larga'].includes(v) ? v : 'media';
+    } catch { return 'media'; }
+  }
+  function aplicarExtension(valor) {
+    try { localStorage.setItem(EXTENSION_KEY, valor); } catch { /* sin storage */ }
+    document.querySelectorAll('#extension-seg .seg-btn, #extension-chat .seg-btn').forEach((b) => {
+      const on = b.dataset.extension === valor;
+      b.classList.toggle('is-on', on);
+      b.setAttribute('aria-checked', String(on));
+    });
+  }
+  aplicarExtension(extensionGuardada());
+  document.querySelectorAll('#extension-seg .seg-btn, #extension-chat .seg-btn').forEach((b) =>
+    b.addEventListener('click', () => aplicarExtension(b.dataset.extension)));
   mqOscuro.addEventListener('change', () => { if (temaGuardado() === 'sistema') aplicarTema('sistema'); });
   $('theme-toggle').addEventListener('click', () => aplicarTema(esOscuro() ? 'claro' : 'oscuro'));
   document.querySelectorAll('#tema-seg .seg-btn').forEach((b) =>
@@ -127,11 +148,11 @@
   const NOMBRE_PROV = { gemini: 'Gemini', groq: 'Groq', openai: 'OpenAI', cerebras: 'Cerebras', mistral: 'Mistral' };
   let estadoIA = null;
 
-  async function refrescarEstado() {
+  async function refrescarEstado({ probar = false } = {}) {
     const el = $('rail-status');
     const txt = el.querySelector('.rail-status-text');
     try {
-      estadoIA = await getJSON('/settings/ai');
+      estadoIA = await getJSON(probar ? '/settings/ai?probar=1' : '/settings/ai');
       el.className = 'rail-status ' + (estadoIA.ready ? 'ok' : 'bad');
       txt.textContent = estadoIA.ready
         ? `Conectado · ${NOMBRE_PROV[estadoIA.provider] || estadoIA.provider}`
@@ -540,7 +561,7 @@
     const msgEl = appendBotPendiente();
     let full = '';
     try {
-      await DianaSSE.post('/chat', { messages: conv.messages }, {
+      await DianaSSE.post('/chat', { messages: conv.messages, extension: extensionGuardada() }, {
         signal: abortCtl.signal,
         onEvent(obj) {
           if (obj.error) { full += `${full ? '\n\n' : ''}**No se pudo completar:** ${obj.error}`; pintar(msgEl, full); return false; }
@@ -1094,7 +1115,7 @@
   function aiSetMsg(text, kind) { aiMsg.textContent = text || ''; aiMsg.className = 'ai-msg' + (kind ? ' ' + kind : ''); }
 
   async function aiRefresh() {
-    const server = await refrescarEstado();
+    const server = await refrescarEstado({ probar: true });
     const local = api?.aiSettingsGet ? await api.aiSettingsGet() : null;
     if (local?.provider) aiProvider.value = local.provider;
     else if (server?.provider) aiProvider.value = server.provider;
@@ -1480,9 +1501,13 @@
     renderMessages();
     refrescarBadge();
 
+    const idAlCargar = activeId;
     const estado = await refrescarEstado();
     // Sin key, lo primero es configurarla: Diana no puede responder.
     if (estado && !estado.ready) { irA('ajustes'); return; }
+    // Si mientras tanto el usuario ya empezó a preguntar, no se le cambia la
+    // pantalla: reiniciar acá borraba de la vista la consulta en curso.
+    if (streaming || activeId !== idAlCargar) return;
     // Se abre siempre en una consulta nueva, con el panel del día arriba
     // (como el front anterior). El historial queda a un clic.
     activeId = null;

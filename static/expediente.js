@@ -292,7 +292,9 @@
         ...historial,
       ];
 
-      await DianaSSE.post('/chat', { messages: mensajes }, {
+      let extension = 'media';
+      try { extension = localStorage.getItem('diana_extension') || 'media'; } catch { /* sin storage */ }
+      await DianaSSE.post('/chat', { messages: mensajes, extension }, {
         onEvent(obj) {
           if (obj.error)  { bot.innerHTML = md(`**Error:** ${obj.error}`); return false; }
           if (obj.status) { bot.innerHTML = `<span class="exp-status">${esc(obj.status)}</span>`; abajo(); }

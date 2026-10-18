@@ -4,6 +4,7 @@ Prompts cargados desde prompts/*.md al arranque.
 Un solo punto de import para todo el prompt del sistema: los routers y el
 orquestador piden constantes de aquí en vez de leer archivos por su cuenta.
 """
+import re
 from datetime import datetime
 
 from config import load_prompt
@@ -16,6 +17,15 @@ SYSTEM_BASE    = load_prompt("system_base")
 # System prompt compacto para Fase 3 con tool results — ahorra ~800 tokens
 # vs SYSTEM_BASE. Lleva un placeholder {hoy}.
 SYSTEM_MINI = load_prompt("system_mini")
+
+# Largo de la respuesta que elige el usuario (Ajustes o el selector del chat).
+# "media" no agrega nada: es el comportamiento de siempre.
+EXTENSIONES = ("corta", "media", "larga")
+NOTA_EXTENSION = {
+    m.group(1): m.group(2).strip()
+    for m in re.finditer(r"(?ms)^## (corta|larga)\n(.*?)(?=^## (?:corta|larga)\n|\Z)",
+                         load_prompt("extension_respuestas"))
+}
 
 LIVE_ANALYSIS_PROMPT = load_prompt("live_analysis")
 

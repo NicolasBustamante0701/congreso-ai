@@ -1042,3 +1042,39 @@ def test_filtro_acepta_art_abreviado_si_la_norma_dice_articulo():
     fuentes = _canon('{"articulo": "132", "texto": "artículo 132. la cámara de diputados hace efectiva…"}')
     limpio, n = _quitar_no_verificable("- [Constitución, Art. 132](https://x) (pág. 104)\n", fuentes)
     assert n == 0 and "Art. 132" in limpio
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("extension,marca", [
+    ("corta", "LARGO DE LA RESPUESTA: CORTA"),
+    ("larga", "LARGO DE LA RESPUESTA: LARGA"),
+    ("media", None),
+    ("cualquiera", None),
+])
+async def test_extension_de_la_respuesta_llega_al_system(extension, marca):
+    orch = ChatOrchestrator([user("¿qué es una interpelación?")], extension=extension)
+    orch._analyze()
+    vistos = []
+
+    def fake_stream(msgs, **k):
+        vistos.append(msgs[0]["content"])
+        async def gen():
+            yield ("text", "Respuesta.\n")
+        return gen()
+
+    with patch("services.orchestrator.llm.stream", fake_stream):
+        _ = [ev async for ev in orch._stream_final([{"role": "system", "content": "BASE"}, user("x")], 1000)]
+    assert vistos[0].startswith("BASE")
+    if marca:
+        assert marca in vistos[0] and "completas" in vistos[0]
+    else:
+        assert vistos[0] == "BASE"
+        assert orch.extension == "media"
+
+
+def test_extension_larga_da_mas_margen_en_conversacion():
+    larga = ChatOrchestrator([user("explícame qué es una cuestión de confianza")], extension="larga")
+    larga._analyze()
+    media = ChatOrchestrator([user("explícame qué es una cuestión de confianza")])
+    media._analyze()
+    assert larga._phase3_max_tokens() > media._phase3_max_tokens()

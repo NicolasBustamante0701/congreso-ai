@@ -182,10 +182,16 @@ async def test_expediente_devuelve_error_si_el_scraper_revienta(client):
 async def test_settings_ai_informa_estado(client):
     from unittest.mock import AsyncMock, patch
 
-    with patch("routers.settings._probar_key", AsyncMock(return_value=(True, ""))):
-        r = await client.get("/settings/ai")
-    assert r.status_code == 200
-    assert set(r.json()) == {"provider", "ready", "funciona", "error", "transcripcion"}
+    import routers.settings as settings
+    settings._PRUEBA_CACHE.clear()
+    settings._PRUEBA_EN_CURSO.clear()
+    with patch("routers.settings._probar_key", AsyncMock(return_value=(False, "bloqueada"))), \
+         patch("routers.settings.LLM_API_KEY", "k"):
+        r = await client.get("/settings/ai")             # al instante, sin esperar la prueba
+        assert r.status_code == 200
+        assert set(r.json()) == {"provider", "ready", "funciona", "error", "transcripcion"}
+        r = await client.get("/settings/ai?probar=1")    # Ajustes espera el resultado real
+        assert r.json()["funciona"] is False and r.json()["error"] == "bloqueada"
 
 
 async def test_settings_ai_test_rechaza_proveedor_o_key_vacios(client):
@@ -258,3 +264,21 @@ async def test_agenda_ordena_y_no_inventa_fechas(client, sin_cache_vistas):
     with patch("routers.pages.fetch_agenda_camaras", AsyncMock(return_value=agenda)):
         r = (await client.get("/agenda", params={"dias": 14})).json()
     assert [s["tema"] for s in r["sesiones"]] == ["A", "B"]
+
+
+
+async def test_chat_pasa_la_extension_al_orquestador(client):
+    from unittest.mock import patch
+
+    recibido = {}
+
+    class Falso:
+        def __init__(self, messages, extension=None):
+            recibido["extension"] = extension
+
+        async def run(self):
+            yield "data: [DONE]\n\n"
+
+    with patch("routers.chat.ChatOrchestrator", Falso), patch("routers.chat.LLM_API_KEY", "k"):
+        await client.post("/chat", json={"messages": [{"role": "user", "content": "hola"}], "extension": "corta"})
+    assert recibido["extension"] == "corta"

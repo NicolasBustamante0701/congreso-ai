@@ -22,6 +22,6 @@ async def chat(request: Request):
             )
         return StreamingResponse(err(), media_type="text/event-stream")
 
-    orchestrator = ChatOrchestrator(messages)
+    orchestrator = ChatOrchestrator(messages, extension=body.get("extension"))
     return StreamingResponse(sse.vigilar_desconexion(request, orchestrator.run()),
                              media_type="text/event-stream")

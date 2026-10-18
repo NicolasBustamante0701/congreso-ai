@@ -198,7 +198,14 @@
                 <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M10 16V4M4.8 9.2L10 4l5.2 5.2"/></svg>
               </button>
             </div>
-            <p class="composer-hint">Diana responde solo con datos de las fuentes oficiales del Congreso. Enter envía · Shift+Enter, nueva línea · arrastra un PDF para analizarlo.</p>
+            <div class="composer-pie">
+              <p class="composer-hint">Diana responde solo con datos de las fuentes oficiales del Congreso. Enter envía · Shift+Enter, nueva línea · arrastra un PDF para analizarlo.</p>
+              <div class="seg seg--chico" id="extension-chat" role="radiogroup" aria-label="Largo de las respuestas" title="Largo de las respuestas">
+                <button class="seg-btn" data-extension="corta" role="radio">Cortas</button>
+                <button class="seg-btn" data-extension="media" role="radio">Medias</button>
+                <button class="seg-btn" data-extension="larga" role="radio">Largas</button>
+              </div>
+            </div>
           </div>
         </div>
       </section>
@@ -343,6 +350,13 @@
                   <button class="seg-btn" data-tema="claro" role="radio">Claro</button>
                   <button class="seg-btn" data-tema="oscuro" role="radio">Oscuro</button>
                 </div>
+                <span class="d-label" style="margin-top:16px">Largo de las respuestas</span>
+                <div class="seg" id="extension-seg" role="radiogroup" aria-label="Largo de las respuestas">
+                  <button class="seg-btn" data-extension="corta" role="radio">Cortas</button>
+                  <button class="seg-btn" data-extension="media" role="radio">Medias</button>
+                  <button class="seg-btn" data-extension="larga" role="radio">Largas</button>
+                </div>
+                <p class="d-hint">Cortas: lo esencial. Largas: con contexto y explicación. Las tablas y los datos siempre salen completos.</p>
                 <label class="d-label" for="aj-nombre" style="margin-top:16px">Tu nombre para el saludo <span class="opcional">(opcional)</span></label>
                 <input class="d-input" id="aj-nombre" type="text" maxlength="40" placeholder="Ej. Julio César" style="max-width:320px">
               </div>

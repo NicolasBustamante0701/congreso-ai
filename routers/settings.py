@@ -4,6 +4,7 @@ La key la guarda Electron (cifrada, en la máquina del usuario) y se la pasa a
 este proceso como variable de entorno al arrancarlo — ver aiEnv() en main.js.
 Acá solo se informa qué hay configurado y se valida una key nueva.
 """
+import asyncio
 import time
 
 from fastapi import APIRouter, Request
@@ -53,8 +54,24 @@ async def _probar_key(provider: str, api_key: str) -> tuple[bool, str]:
         await client.close()
 
 
+_PRUEBA_EN_CURSO: dict = {}
+
+
+async def _probar_y_guardar(clave):
+    funciona, error = await _probar_key(*clave)
+    _PRUEBA_CACHE[clave] = (time.monotonic(), funciona, error)
+    return funciona, error
+
+
 @router.get("/settings/ai")
-async def ai_status():
+async def ai_status(probar: bool = False):
+    """
+    Sin `probar`, responde al instante con la última prueba conocida (o
+    "funciona": null) y prueba la key en segundo plano: lo pide la app al
+    arrancar y una espera de 2-3 s ahí reiniciaba el chat que el usuario ya
+    había empezado (16/10/2026). Ajustes pide `probar=1` y espera el
+    resultado real.
+    """
     funciona, error = None, ""
     if LLM_API_KEY:
         clave = (LLM_PROVIDER, LLM_API_KEY)
@@ -62,8 +79,11 @@ async def ai_status():
         if hit and time.monotonic() - hit[0] < _PRUEBA_TTL:
             funciona, error = hit[1], hit[2]
         else:
-            funciona, error = await _probar_key(LLM_PROVIDER, LLM_API_KEY)
-            _PRUEBA_CACHE[clave] = (time.monotonic(), funciona, error)
+            tarea = _PRUEBA_EN_CURSO.get(clave)
+            if tarea is None or tarea.done():
+                tarea = _PRUEBA_EN_CURSO[clave] = asyncio.create_task(_probar_y_guardar(clave))
+            if probar:
+                funciona, error = await asyncio.shield(tarea)
     return {
         "provider": LLM_PROVIDER,
         "ready": bool(LLM_API_KEY),
