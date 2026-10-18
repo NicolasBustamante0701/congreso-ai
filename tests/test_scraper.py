@@ -282,3 +282,57 @@ def test_parsear_agenda_tema_largo_y_comision_bicameral():
     assert "Senador José Arista" in bicameral["organiza"]
     assert "Año Fiscal 2027" in bicameral["tema"]
     assert all(s["lugar"] for s in sesiones)
+
+
+def test_normas_articulo_modificado_queda_con_el_texto_vigente():
+    # Constitución compilada: texto original, nota "(*) … modificados" y el
+    # texto nuevo entre comillas. Debe quedar el nuevo más lo que sigue vigente.
+    from services.normas import separar_articulos
+    paginas = [
+        "Artículo 131. Es obligatoria la concurrencia del Consejo de Ministros.\n",
+        "Artículo 132. El Congreso hace efectiva la responsabilidad política. "
+        "Su aprobación requiere del voto de más de la mitad del número legal de miembros del Congreso.(*)\n"
+        "(*) Párrafos 1 y 2 modificados por el artículo 1 de la Ley Nº 31988, cuyos textos son los siguientes:\n"
+        "“Artículo 132. La Cámara de Diputados hace efectiva la responsabilidad política del Consejo de Ministros.”\n"
+        "El ministro censurado debe renunciar. El Presidente acepta la dimisión dentro de las setenta y dos horas.\n",
+        "Artículo 133. El Presidente del Consejo de Ministros puede plantear una cuestión de confianza.\n",
+    ]
+    arts = {a["numero"]: a for a in separar_articulos(paginas)}
+    assert list(arts) == ["131", "132", "133"]
+    t = arts["132"]["texto"]
+    assert "La Cámara de Diputados hace efectiva" in t
+    assert "El Congreso hace efectiva" not in t
+    assert "setenta y dos horas" in t and "Ley Nº 31988" in t
+    assert arts["132"]["pagina"] == 2
+
+
+def test_normas_decodifica_titulos_con_fuente_corrida():
+    # Reglamento de la Cámara de Diputados 2026: "Artículo 43. Definición…"
+    from services.normas import separar_articulos
+    paginas = ["Artículo 42. Comisiones. Texto del artículo cuarenta y dos.\n"
+               "Artículo 43\x11\x03 'H¾QLFLyQ\x03 GH\x03 FRPLVLRQHV\x03\nlegislativas\n"
+               "Las comisiones ordinarias legislativas son grupos de trabajo.\n"]
+    arts = {a["numero"]: a for a in separar_articulos(paginas)}
+    assert arts["43"]["texto"].startswith("Artículo 43. Definición de comisiones")
+
+
+@pytest.mark.asyncio
+async def test_normas_busca_por_tema_y_por_numero(monkeypatch):
+    from services import normas
+    datos = {
+        "constitucion": [
+            {"numero": "131", "pagina": 103, "texto": "Artículo 131. Es obligatoria la concurrencia de los ministros cuando el Congreso los llama para interpelarlos."},
+            {"numero": "132", "pagina": 104, "texto": "Artículo 132. La Cámara de Diputados hace efectiva la responsabilidad política mediante el voto de censura. El ministro censurado debe renunciar."},
+        ],
+        "diputados": [
+            {"numero": "157", "pagina": 108, "texto": "Artículo 157. Moción de censura. Debe ser presentada por no menos del 25 % del número legal."},
+            {"numero": "10", "pagina": 5, "texto": "Artículo 10. Mesa Directiva. La Mesa Directiva conduce los debates."},
+        ],
+    }
+    monkeypatch.setattr(normas, "_cache", normas._indexar(datos))
+    r = await normas.buscar("¿qué pasa si censuran a un ministro?")
+    arts = [a["articulo"] for a in r["articulos"]]
+    assert arts[0] == "132" and "157" in arts and "10" not in arts
+    r = await normas.buscar("¿qué dice el artículo 131 de la Constitución?")
+    assert [a["articulo"] for a in r["articulos"]] == ["131"]
+    assert r["articulos"][0]["norma"] == "Constitución Política del Perú"

@@ -26,6 +26,7 @@ TTL_SEGUNDOS = {
     "leer_formula_legal": 30 * 60,
     "fetch_comisiones": 6 * 3600,
     "fetch_miembros_comision": 6 * 3600,
+    "consultar_normas": 24 * 3600,
     "fetch_mesa_directiva": 6 * 3600,
 }
 TTL_DEFAULT = 5 * 60

@@ -39,7 +39,7 @@ from routers import (
     settings,
     transcripts,
 )
-from services import llm, seguimiento
+from services import llm, normas, seguimiento
 from services.observability import RequestContextMiddleware
 
 
@@ -83,9 +83,13 @@ async def lifespan(app: FastAPI):
     # Revisión periódica de los proyectos seguidos, solo mientras la app
     # está abierta (ver services/seguimiento.py).
     revision = asyncio.create_task(seguimiento.bucle_automatico())
+    # La Constitución y los Reglamentos se bajan una vez (~20 MB) y quedan
+    # guardados: así la primera pregunta de procedimiento no espera la descarga.
+    normas_listas = asyncio.create_task(normas.preparar())
     yield
     warmup.cancel()
     revision.cancel()
+    normas_listas.cancel()
     logger.info("Diana apagándose")
 
 

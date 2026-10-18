@@ -74,6 +74,8 @@ MAX_TOOL_RESULT_CHARS_POR_TOOL = {
     # Una comisión de Diputados llega a 40 integrantes, y "Constitución" sin
     # cámara trae las dos.
     "fetch_miembros_comision": 20000,
+    # Hasta 6 artículos de ~1800 caracteres.
+    "consultar_normas": 14000,
 }
 
 # Si aun así no entra, esto se descarta antes de cortar filas: repite los
@@ -112,6 +114,25 @@ def _corregir_numero_copiado(args: dict, pedido: str) -> dict:
             logger.warning("Número de proyecto mal copiado por el router: %r → %r", valor, correcto)
             args = {**args, clave: correcto}
     return args
+
+
+# Preguntas de procedimiento: se responden con la Constitución y los
+# Reglamentos (services/normas.py), no con la memoria del modelo.
+_PROCEDIMIENTO_TEMA_RE = re.compile(
+    r"\b(censur\w*|interpel\w*|cuesti[oó]n de confianza|confianza|vacancia|vacar|disoluci\w*|disolver"
+    r"|qu[oó]rum|votaci[oó]n|votos|mayor[ií]a|firmas|reglamento|constituci[oó]n|art[ií]culo"
+    r"|comisi[oó]n permanente|acusaci[oó]n constitucional|antejuicio|juicio pol[ií]tico|inmunidad"
+    r"|insistencia|segunda votaci[oó]n|legislatura|junta de portavoces|mesa directiva|moci[oó]n)\b",
+    re.IGNORECASE)
+_PROCEDIMIENTO_PREGUNTA_RE = re.compile(
+    r"(qu[eé]\s+(es|son|pasa|significa|implica|requiere|dice|ocurre|sucede)|c[oó]mo\s+(funciona|se|es)"
+    r"|cu[aá]nt[oa]s?|qui[eé]n(es)?\s+(puede|debe|preside|vota|decide|aprueba)|requisito|procedimiento"
+    r"|expl[ií]ca|plazo|puede[n]?\b|debe[n]?\b|y\s+si\b|si\s+(lo|la|los|las)\s+\w+|detalle)",
+    re.IGNORECASE)
+
+
+def _es_procedimiento(texto: str) -> bool:
+    return bool(_PROCEDIMIENTO_TEMA_RE.search(texto or "") and _PROCEDIMIENTO_PREGUNTA_RE.search(texto or ""))
 
 
 def _compactar_para_agrupado(resultado):
@@ -794,8 +815,38 @@ _DETALLE_NO_VERIFICABLE_RE = re.compile(
     r"|\b\d+\s*(?:horas|d(?:í|i)as(?:\s+(?:naturales|h(?:á|a)biles|calendario))?)\b"
     r"|\bmayor(?:í|i)a\s+(?:simple|absoluta|calificada)"
     r"|\bm(?:á|a)s de la mitad\b|\bun tercio\b|\bdos tercios\b|\b1/3\b|\b2/3\b"
-    r"|\b\d+\s*(?:votos|firmas)\b",
+    r"|\b\d+\s*(?:votos|firmas)\b"
+    # Cálculos sobre el total ("32 de 130"): el modelo los saca de memoria.
+    r"|\b\d+\s+de\s+(?:los\s+)?\d{2,}\b",
     re.IGNORECASE)
+
+_UNIDADES = ["", "uno", "dos", "tres", "cuatro", "cinco", "seis", "siete", "ocho", "nueve", "diez",
+             "once", "doce", "trece", "catorce", "quince", "dieciséis", "diecisiete", "dieciocho",
+             "diecinueve", "veinte", "veintiuno", "veintidós", "veintitrés", "veinticuatro",
+             "veinticinco", "veintiséis", "veintisiete", "veintiocho", "veintinueve"]
+_DECENAS = {30: "treinta", 40: "cuarenta", 50: "cincuenta", 60: "sesenta", 70: "setenta",
+            80: "ochenta", 90: "noventa"}
+_ORDINALES = {"primer": 1, "segundo": 2, "tercer": 3, "cuarto": 4, "quinto": 5, "sexto": 6,
+              "séptimo": 7, "octavo": 8, "noveno": 9, "décimo": 10}
+
+
+def _numeros_en_letras_a_cifras(texto: str) -> str:
+    """"setenta y dos horas" → "72 horas", "décimo día" → "10 día": las
+    normas escriben los números en letras y el modelo, en cifras."""
+    palabras = {w: i for i, w in enumerate(_UNIDADES) if w}
+    for d, w in _DECENAS.items():
+        palabras[w] = d
+        for u in range(1, 10):
+            palabras[f"{w} y {_UNIDADES[u]}"] = d + u
+    palabras.update(_ORDINALES)
+    for w in sorted(palabras, key=len, reverse=True):
+        texto = re.sub(rf"\b{w}\b", str(palabras[w]), texto)
+    return texto
+
+
+def _canon(t: str) -> str:
+    """"Art. 132", "art 132" y "Artículo 132" son lo mismo."""
+    return re.sub(r"\bart(?:[íi]culo|\.)?\s*(\d)", r"artículo \1", t.lower())
 
 
 def _quitar_no_verificable(texto: str, fuentes_min: str) -> tuple[str, int]:
@@ -804,7 +855,7 @@ def _quitar_no_verificable(texto: str, fuentes_min: str) -> tuple[str, int]:
     salida = []
     for linea in texto.splitlines(keepends=True):
         # Por número exacto: "5 días" no vale porque la fuente diga "15 días".
-        if any(not re.search(r"(?<![\d/])" + re.escape(m.group(0).lower()) + r"(?![\d])", fuentes_min)
+        if any(not re.search(r"(?<![\d/])" + re.escape(_canon(m.group(0))) + r"(?![\d])", fuentes_min)
                for m in _DETALLE_NO_VERIFICABLE_RE.finditer(linea)):
             quitadas += 1
             continue
@@ -1019,7 +1070,16 @@ class ChatOrchestrator:
             if not ok:
                 return
 
-        msgs = self._con_paginas([{"role": "system", "content": system_p3}] + self.conversation)
+        conversacion = self.conversation
+        # Sobre un PDF cargado, una pregunta de procedimiento ("¿qué pasa si
+        # lo censuran?") se responde con la Constitución y los Reglamentos:
+        # el 18/10/2026 Mistral la contestó de memoria, con plazos falsos.
+        if _es_procedimiento(self.last_msg):
+            async for ev in self._ejecutar_herramientas([("consultar_normas", {"consulta": self.last_msg})]):
+                yield ev
+            system_p3 += "\n" + WORKFLOWS["consultar_normas"]
+            conversacion = conversacion[:-1] + self.tool_msgs + conversacion[-1:]
+        msgs = self._con_paginas([{"role": "system", "content": system_p3}] + conversacion)
         # 2048 cortaba a la mitad las respuestas sobre un PDF cargado (visto
         # el 18/10/2026: terminaba en "Detalle clave:"). Es un techo, no un costo.
         async for ev in self._stream_final(msgs, max_tokens=6000):
@@ -1417,7 +1477,8 @@ class ChatOrchestrator:
         # Texto libre (sin herramientas o sobre un documento cargado): los
         # detalles de procedimiento que no están en las fuentes se quitan.
         filtrar = bool(self._respaldo_preferido())
-        fuentes_min = "\n".join(str(m.get("content") or "") for m in msgs + self.messages).lower() if filtrar else ""
+        fuentes_min = _canon(_numeros_en_letras_a_cifras(
+            "\n".join(str(m.get("content") or "") for m in msgs + self.messages).lower())) if filtrar else ""
         omitidas = {"n": 0}
 
         def limpio(texto):
@@ -1579,7 +1640,8 @@ class ChatOrchestrator:
         (probado el 18/10/2026). Con datos grandes (tablas de proyectos) Groq
         no sirve: corta en 8000 tokens por pedido y recorta filas.
         """
-        texto_libre = self._short_circuit or self.solo_responder_directo or not self.tool_msgs
+        texto_libre = (self._short_circuit or self.solo_responder_directo or not self.tool_msgs
+                       or set(self.tools_usados) <= {"consultar_normas"})
         return ("groq",) if texto_libre and not self.is_resumen else ()
 
     def _respuesta_sin_ia(self) -> str:
@@ -1713,6 +1775,14 @@ class ChatOrchestrator:
                 return
 
             async for ev in self._phase2(choice):
+                yield ev
+
+        # Pregunta de procedimiento sin herramientas (el router eligió
+        # responder_directo): se le agregan los artículos que corresponden.
+        if (not self.is_resumen and "consultar_normas" not in self.tools_usados
+                and (self.solo_responder_directo or not self.tool_msgs)
+                and _es_procedimiento(self.last_msg)):
+            async for ev in self._ejecutar_herramientas([("consultar_normas", {"consulta": self.last_msg})]):
                 yield ev
 
         # Con tool results el contexto ya viene del resultado; mandar 20 mensajes

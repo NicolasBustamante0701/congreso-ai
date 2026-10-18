@@ -24,6 +24,7 @@ from scraper import (
     fetch_proyectos,
     fetch_sesiones,
 )
+from services import normas
 
 TOOLS = [
     {
@@ -302,6 +303,33 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "consultar_normas",
+            "description": (
+                "Artículos de la Constitución y de los Reglamentos (Cámara de Diputados, "
+                "Senado, Congreso) vigentes desde el bicameral de 2026. Para cualquier pregunta "
+                "de procedimiento o de reglas: qué es y cómo funciona una censura, interpelación, "
+                "cuestión de confianza, vacancia, comisión, quórum, votaciones, plazos, firmas "
+                "necesarias, o 'qué dice el artículo N'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "consulta": {
+                        "type": "string",
+                        "description": "La pregunta o los términos: 'censura de ministros', 'artículo 132 de la Constitución'."
+                    },
+                    "norma": {
+                        "type": "string",
+                        "description": "Opcional: 'constitucion', 'diputados', 'senado' o 'congreso' si el usuario nombra una."
+                    }
+                },
+                "required": ["consulta"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "fetch_miembros_comision",
             "description": (
                 "Integrantes (presidente, vicepresidente, secretario, titulares y "
@@ -413,6 +441,7 @@ TOOL_MAP = {
     "fetch_agenda_pleno":      lambda args: fetch_agenda_pleno(**_solo(args, fetch_agenda_pleno)),
     "fetch_mesa_directiva":    lambda args: fetch_mesa_directiva(**_solo(args, fetch_mesa_directiva)),
     "fetch_comisiones":        lambda args: fetch_comisiones(**{k: v for k, v in args.items() if k in ("camara",)}),
+    "consultar_normas":        lambda args: normas.buscar(args.get("consulta") or "", args.get("norma")),
     "fetch_miembros_comision": lambda args: fetch_miembros_comision(**{k: v for k, v in args.items() if k in ("comision", "camara")}),
     "fetch_agenda_camaras":    lambda args: fetch_agenda_camaras(**{k: v for k, v in args.items() if k in ("dias", "camara")}),
     "fetch_interpelaciones":   lambda args: fetch_interpelaciones(**{k: v for k, v in args.items() if k in ("ministro",)}),
@@ -433,6 +462,7 @@ STATUS_LABELS = {
     "fetch_mesa_directiva":    "Consultando la Mesa Directiva...",
     "fetch_comisiones":        "Consultando el cuadro de comisiones...",
     "fetch_miembros_comision": "Consultando los integrantes de la comisión...",
+    "consultar_normas":        "Consultando la Constitución y los Reglamentos...",
     "fetch_agenda_camaras":    "Revisando agenda del Congreso bicameral...",
     "fetch_interpelaciones":   "Buscando mociones de interpelación...",
     "leer_formula_legal":      "Leyendo el texto real del proyecto...",

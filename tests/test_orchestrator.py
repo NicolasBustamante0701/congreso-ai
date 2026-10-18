@@ -1007,3 +1007,38 @@ def test_quita_detalles_de_procedimiento_que_no_estan_en_la_fuente():
     assert n == 3
     assert "48 horas" not in limpio and "mayoría absoluta" not in limpio
     assert "90 días hábiles" in limpio and "44 preguntas" in limpio
+
+
+@pytest.mark.parametrize("texto,esperado", [
+    ("¿Y qué pasa si después lo censuran? Dame el detalle clave", True),
+    ("Explícame la interpelación al ministro de Educación", True),
+    ("¿Cuántas firmas necesita una moción de censura?", True),
+    ("Dame la agenda de comisiones de hoy", False),
+    ("Revisa los proyectos de ley de los últimos 15 días", False),
+    ("hola", False),
+])
+def test_detecta_preguntas_de_procedimiento(texto, esperado):
+    from services.orchestrator import _es_procedimiento
+    assert _es_procedimiento(texto) is esperado
+
+
+def test_filtro_reconoce_numeros_en_letras_y_quita_calculos():
+    from services.orchestrator import (
+        _numeros_en_letras_a_cifras,
+        _quitar_no_verificable,
+    )
+    fuentes = _numeros_en_letras_a_cifras(
+        "el presidente acepta la dimisión dentro de las setenta y dos horas siguientes. "
+        "se debate y vota entre el cuarto y décimo día natural.")
+    texto = ("- Acepta la dimisión dentro de 72 horas.\n"
+             "- Firmas: 25% (32 de 130).\n"
+             "- Se vota entre el 4 y el 10 día.\n")
+    limpio, n = _quitar_no_verificable(texto, fuentes)
+    assert n == 1 and "72 horas" in limpio and "32 de 130" not in limpio
+
+
+def test_filtro_acepta_art_abreviado_si_la_norma_dice_articulo():
+    from services.orchestrator import _canon, _quitar_no_verificable
+    fuentes = _canon('{"articulo": "132", "texto": "artículo 132. la cámara de diputados hace efectiva…"}')
+    limpio, n = _quitar_no_verificable("- [Constitución, Art. 132](https://x) (pág. 104)\n", fuentes)
+    assert n == 0 and "Art. 132" in limpio
