@@ -785,6 +785,33 @@ _NOMBRE_HERRAMIENTA_RE = re.compile(
 _SEPARADOR_TABLA_RE = re.compile(r"^\s*\|\s*:?-{3,}", re.MULTILINE)
 
 
+# Detalles de procedimiento que los modelos traen de memoria y suelen estar
+# mal (o desactualizados desde el bicameral de 2026): "renunciar en 48 horas
+# (art. 120)", "más de la mitad del número legal", "43 firmas". En texto
+# libre, una línea con uno de estos que no aparece en las fuentes se quita.
+_DETALLE_NO_VERIFICABLE_RE = re.compile(
+    r"\b(?:art(?:í|i)culo|art\.)\s*\d+(?:\.\d+)?"
+    r"|\b\d+\s*(?:horas|d(?:í|i)as(?:\s+(?:naturales|h(?:á|a)biles|calendario))?)\b"
+    r"|\bmayor(?:í|i)a\s+(?:simple|absoluta|calificada)"
+    r"|\bm(?:á|a)s de la mitad\b|\bun tercio\b|\bdos tercios\b|\b1/3\b|\b2/3\b"
+    r"|\b\d+\s*(?:votos|firmas)\b",
+    re.IGNORECASE)
+
+
+def _quitar_no_verificable(texto: str, fuentes_min: str) -> tuple[str, int]:
+    """Quita las líneas con detalles de procedimiento que no están en las fuentes."""
+    quitadas = 0
+    salida = []
+    for linea in texto.splitlines(keepends=True):
+        # Por número exacto: "5 días" no vale porque la fuente diga "15 días".
+        if any(not re.search(r"(?<![\d/])" + re.escape(m.group(0).lower()) + r"(?![\d])", fuentes_min)
+               for m in _DETALLE_NO_VERIFICABLE_RE.finditer(linea)):
+            quitadas += 1
+            continue
+        salida.append(linea)
+    return "".join(salida), quitadas
+
+
 def _listo_para_emitir(pendiente: str) -> bool:
     """
     Antes de mostrar la primera línea se espera a ver si la respuesta arranca
@@ -993,7 +1020,9 @@ class ChatOrchestrator:
                 return
 
         msgs = self._con_paginas([{"role": "system", "content": system_p3}] + self.conversation)
-        async for ev in self._stream_final(msgs, max_tokens=2048):
+        # 2048 cortaba a la mitad las respuestas sobre un PDF cargado (visto
+        # el 18/10/2026: terminaba en "Detalle clave:"). Es un techo, no un costo.
+        async for ev in self._stream_final(msgs, max_tokens=6000):
             yield ev
 
     async def _inject_transcript(self):
@@ -1367,7 +1396,7 @@ class ChatOrchestrator:
                 # tokens, más el razonamiento interno de Gemini.
                 return 24000
             return 14000 if chars > 12000 else 8000
-        return 2500
+        return 4000
 
     async def _stream_final(self, msgs, max_tokens):
         """
@@ -1385,8 +1414,17 @@ class ChatOrchestrator:
         permitidos = _links_permitidos(
             "\n".join(str(m.get("content") or "") for m in msgs + self.messages))
 
+        # Texto libre (sin herramientas o sobre un documento cargado): los
+        # detalles de procedimiento que no están en las fuentes se quitan.
+        filtrar = bool(self._respaldo_preferido())
+        fuentes_min = "\n".join(str(m.get("content") or "") for m in msgs + self.messages).lower() if filtrar else ""
+        omitidas = {"n": 0}
+
         def limpio(texto):
             texto = _RELLENO_RE.sub(" ", texto)
+            if filtrar:
+                texto, n = _quitar_no_verificable(texto, fuentes_min)
+                omitidas["n"] += n
             if self.tabla_agenda_mostrada:
                 # La tabla ya la mostró el código: Mistral la repetía igual.
                 texto = re.sub(r"(?m)^\s*\|.*(?:\n|$)", "", texto)
@@ -1429,7 +1467,8 @@ class ChatOrchestrator:
             revisando_inicio = True
             degenerado = False
             info: dict = {}
-            gen = llm.stream(msgs_intento, max_tokens=max_tokens, excluir=excluir, info=info)
+            gen = llm.stream(msgs_intento, max_tokens=max_tokens, excluir=excluir, info=info,
+                             preferir=self._respaldo_preferido())
             try:
                 async for kind, payload in gen:
                     if kind == "text":
@@ -1513,6 +1552,12 @@ class ChatOrchestrator:
             yield sse.text("\n\n" + contexto["bloque"])
         if aviso_corte:
             yield sse.text(aviso_corte)
+        if omitidas["n"]:
+            nota = ("\n\n*Omití detalles de procedimiento (plazos, artículos o mayorías) que no "
+                    "están en las fuentes consultadas: el modelo los traía de memoria y pueden "
+                    "estar desactualizados desde el Congreso bicameral.*")
+            completo += nota
+            yield sse.text(nota)
         aviso = self._verificar_citas(completo, msgs)
         if aviso:
             yield sse.text(aviso)
@@ -1522,6 +1567,20 @@ class ChatOrchestrator:
         datos = (self.ultimos_resultados.get("fetch_agenda_comisiones")
                  or self.ultimos_resultados.get("fetch_agenda_camaras"))
         return datos if isinstance(datos, dict) and datos.get("sesiones") else None
+
+    def _respaldo_preferido(self) -> tuple:
+        """
+        Respaldo que va primero si el proveedor principal falla.
+
+        En respuestas de texto libre (preguntas sobre un PDF cargado o una
+        sesión, conversación sin herramientas), Mistral gratis inventaba
+        artículos, plazos y precedentes ("renunciar en 48 horas, art. 120")
+        aunque el prompt lo prohíbe; Groq (gpt-oss) se atiene a la fuente
+        (probado el 18/10/2026). Con datos grandes (tablas de proyectos) Groq
+        no sirve: corta en 8000 tokens por pedido y recorta filas.
+        """
+        texto_libre = self._short_circuit or self.solo_responder_directo or not self.tool_msgs
+        return ("groq",) if texto_libre and not self.is_resumen else ()
 
     def _respuesta_sin_ia(self) -> str:
         """

@@ -413,7 +413,7 @@ def test_phase3_responder_directo_usa_base():
 @pytest.mark.parametrize("tools,esperado", [
     (["fetch_expediente"],  8000),   # expedientes son largos
     (["buscar_proyectos"],  8000),   # 15 filas completas sin cortar la tabla
-    ([],                    2500),   # conversación libre
+    ([],                    4000),   # conversación libre
 ])
 def test_phase3_max_tokens(tools, esperado):
     orch = make([user("x")], tools_usados=tools)
@@ -993,3 +993,17 @@ async def test_relleno_a_mitad_de_respuesta_se_continua():
     assert texto.count("## Ficha") == 1
     assert "| 22/07/2026 | PRESENTADO |" in texto
     assert "se cortó" not in texto and "     " not in texto
+
+
+def test_quita_detalles_de_procedimiento_que_no_estan_en_la_fuente():
+    from services.orchestrator import _quitar_no_verificable
+    fuentes = "moción 424 ... pliego de 44 preguntas ... plazo solicitado: 90 días hábiles".lower()
+    texto = ("La moción 424 trae 44 preguntas.\n"
+             "- Plazo: debe renunciar en 48 horas (art. 120 de la Constitución).\n"
+             "- Requiere mayoría absoluta.\n"
+             "- Plazo solicitado: 90 días hábiles.\n"
+             "- Comparece dentro de 5 días.\n")
+    limpio, n = _quitar_no_verificable(texto, fuentes + " plazo de 15 días")
+    assert n == 3
+    assert "48 horas" not in limpio and "mayoría absoluta" not in limpio
+    assert "90 días hábiles" in limpio and "44 preguntas" in limpio

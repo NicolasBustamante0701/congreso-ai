@@ -343,7 +343,7 @@ async def _deltas(provider, messages, *, role, max_tokens, temperature, meta=Non
 
 
 async def stream(messages, *, role="main", max_tokens=2048, temperature=0.4,
-                 excluir: tuple = (), info: dict | None = None):
+                 excluir: tuple = (), info: dict | None = None, preferir: tuple = ()):
     """
     Respuesta en streaming con reintento sobre rate limit y cambio de
     proveedor si el activo falla, se cuelga o se queda sin cuota.
@@ -356,6 +356,9 @@ async def stream(messages, *, role="main", max_tokens=2048, temperature=0.4,
     texto inservible). En `info["proveedor"]` queda el que respondió.
     """
     chain = [p for p in provider_chain() if p not in excluir]
+    # `preferir` adelanta respaldos sin tocar al proveedor principal.
+    if preferir and len(chain) > 1:
+        chain = chain[:1] + sorted(chain[1:], key=lambda p: p not in preferir)
     if not chain:
         yield ("error", "No hay otro proveedor de IA configurado para reintentar.")
         return
