@@ -4,6 +4,8 @@ La key la guarda Electron (cifrada, en la máquina del usuario) y se la pasa a
 este proceso como variable de entorno al arrancarlo — ver aiEnv() en main.js.
 Acá solo se informa qué hay configurado y se valida una key nueva.
 """
+import time
+
 from fastapi import APIRouter, Request
 from openai import AsyncOpenAI
 
@@ -14,11 +16,59 @@ from services.observability import timed
 router = APIRouter()
 
 
+# Probar la key generando una respuesta mínima, no listando modelos: con un
+# proyecto bloqueado por Google, la lista de modelos responde bien y la
+# generación da 403 "Your project has been denied access" (18/10/2026). La
+# pantalla decía "Funcionando" mientras todo lo respondía el respaldo.
+_PRUEBA_CACHE: dict = {}
+_PRUEBA_TTL = 10 * 60
+
+
+def _mensaje_error(e: Exception, provider: str) -> str:
+    texto = str(e)
+    nombre = provider.capitalize()
+    if "denied access" in texto or "PERMISSION_DENIED" in texto:
+        return (f"{nombre} bloqueó el proyecto de esta key. Crea una key en un proyecto "
+                "nuevo (en AI Studio: «Create API key in new project»).")
+    if llm.is_auth_error(e):
+        return f"La key no es válida para {nombre}. Revisa que la copiaste completa y que es de {nombre}."
+    return llm.friendly_error(e, provider=provider)
+
+
+async def _probar_key(provider: str, api_key: str) -> tuple[bool, str]:
+    client = AsyncOpenAI(api_key=api_key, base_url=PROVIDERS[provider]["base_url"],
+                         timeout=20, max_retries=0)
+    try:
+        with timed("Prueba de API key", provider=provider):
+            await client.chat.completions.create(
+                model=llm.model_for(provider, "router"), max_tokens=5,
+                messages=[{"role": "user", "content": "Responde: ok"}])
+        return True, ""
+    except Exception as e:
+        # Saturado o con límite de uso no es culpa de la key: funciona.
+        if llm.is_rate_limit(e) or llm.is_overloaded(e):
+            return True, ""
+        return False, _mensaje_error(e, provider)
+    finally:
+        await client.close()
+
+
 @router.get("/settings/ai")
 async def ai_status():
+    funciona, error = None, ""
+    if LLM_API_KEY:
+        clave = (LLM_PROVIDER, LLM_API_KEY)
+        hit = _PRUEBA_CACHE.get(clave)
+        if hit and time.monotonic() - hit[0] < _PRUEBA_TTL:
+            funciona, error = hit[1], hit[2]
+        else:
+            funciona, error = await _probar_key(LLM_PROVIDER, LLM_API_KEY)
+            _PRUEBA_CACHE[clave] = (time.monotonic(), funciona, error)
     return {
         "provider": LLM_PROVIDER,
         "ready": bool(LLM_API_KEY),
+        "funciona": funciona,
+        "error": error,
         "transcripcion": bool(GROQ_API_KEY),
     }
 
@@ -33,20 +83,8 @@ async def test_key(request: Request):
     if not api_key or len(api_key) > 300:
         return {"ok": False, "error": "Pega una API key."}
 
-    client = AsyncOpenAI(api_key=api_key, base_url=PROVIDERS[provider]["base_url"],
-                         timeout=15, max_retries=0)
-    try:
-        with timed("Prueba de API key", provider=provider):
-            await client.models.list()
-        return {"ok": True}
-    except Exception as e:
-        if llm.is_auth_error(e):
-            nombre = provider.capitalize()
-            return {"ok": False, "error": f"La key no es válida para {nombre}. "
-                                          f"Revisa que la copiaste completa y que es de {nombre}."}
-        return {"ok": False, "error": llm.friendly_error(e, provider=provider)}
-    finally:
-        await client.close()
+    ok, error = await _probar_key(provider, api_key)
+    return {"ok": True} if ok else {"ok": False, "error": error}
 
 
 @router.get("/diagnostico")

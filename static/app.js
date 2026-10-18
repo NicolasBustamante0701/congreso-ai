@@ -1106,6 +1106,8 @@
       aiStatus.innerHTML = '<div class="d-alert d-alert--danger">No se pudo consultar el servidor local.</div>';
     } else if (!server.ready) {
       aiStatus.innerHTML = '<div class="d-alert d-alert--danger">Sin API key: Diana no puede responder hasta que pegues una.</div>';
+    } else if (server.funciona === false) {
+      aiStatus.innerHTML = `<div class="d-alert d-alert--danger">${esc(NOMBRE_PROV[server.provider] || server.provider)} rechaza tu key${local?.hasKey ? ` (…${esc(local.keyHint)})` : ''}: ${esc(server.error)} Mientras tanto responde el respaldo, con menos calidad.</div>`;
     } else {
       aiStatus.innerHTML = `<div class="d-alert d-alert--ok">Funcionando con ${esc(NOMBRE_PROV[server.provider] || server.provider)}${local?.hasKey ? ` (tu key …${esc(local.keyHint)})` : ''}.`
         + (server.transcripcion ? ' Transcripción de sesiones activa.' : ' La transcripción está desactivada: falta la key de Groq.') + '</div>';
