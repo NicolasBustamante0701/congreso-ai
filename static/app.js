@@ -598,7 +598,23 @@
     msgEl.querySelector('.msg-body').appendChild(acciones);
   }
 
+  // Una columna es "corta" si ninguna celda pasa de 24 caracteres: número
+  // de proyecto, fecha, hora, cámara. Esas no se parten en renglones.
+  function marcarColumnasCortas(el) {
+    el.querySelectorAll('table').forEach((table) => {
+      const filas = [...table.rows];
+      const columnas = Math.max(0, ...filas.map((f) => f.cells.length));
+      for (let c = 0; c < columnas; c++) {
+        const celdas = filas.map((f) => f.cells[c]).filter(Boolean);
+        if (celdas.every((td) => td.textContent.trim().length <= 24)) {
+          celdas.forEach((td) => td.classList.add('col-corta'));
+        }
+      }
+    });
+  }
+
   function envolverTablas(el) {
+    marcarColumnasCortas(el);
     el.querySelectorAll('table').forEach((table) => {
       if (table.parentElement.classList.contains('table-wrap')) return;
       const wrap = document.createElement('div');
@@ -657,7 +673,8 @@
       a{color:#8c1227} hr{border:none;border-top:1px solid #ccc;margin:18px 0}
       .ftr{margin-top:36px;border-top:1px solid #ccc;padding-top:10px;font-size:8.5pt;color:#666}
       @media print{body{padding:16px 24px}}
-    </style></head><body>${md(texto)}
+      th,td{overflow-wrap:break-word} .col-corta{white-space:nowrap}
+    </style></head><body>${(() => { const d = document.createElement('div'); d.innerHTML = md(texto); marcarColumnasCortas(d); return d.innerHTML; })()}
     <div class="ftr">Generado por Diana — fuentes oficiales del Congreso de la República del Perú · ${fecha}</div></body></html>`;
   }
   async function conBoton(btn, tarea) {

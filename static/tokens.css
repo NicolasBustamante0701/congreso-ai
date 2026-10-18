@@ -263,6 +263,13 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .md th { text-align: left; font-weight: 650; background: var(--d-surface-2); color: var(--d-text);
   padding: 7px 10px; border: 1px solid var(--d-line); }
 .md td { padding: 7px 10px; border: 1px solid var(--d-line); vertical-align: top; }
+/* En tablas, "anywhere" encogía las columnas cortas hasta una letra de ancho
+   ("FE/CH/A", el número de proyecto cortado en cinco renglones). break-word
+   solo parte una palabra si de verdad no entra. */
+.md th, .md td { overflow-wrap: break-word; }
+/* Columnas cuyo contenido es corto en todas las filas (número, fecha, hora,
+   cámara): sin partir. Las marca marcarColumnasCortas() en app.js. */
+.md .col-corta { white-space: nowrap; }
 .md tr:nth-child(even) td { background: color-mix(in srgb, var(--d-surface-2) 60%, transparent); }
 
 @media (prefers-reduced-motion: reduce) {

@@ -89,6 +89,35 @@ def _parse_row(s: str) -> list:
     return [c.replace('\\|', '|').strip() for c in celdas]
 
 
+# Ancho de un carácter en las celdas, aproximado (Calibri 11).
+_ANCHO_CARACTER_IN = 0.075
+_MAX_CORTA = 24   # mismo criterio que marcarColumnasCortas() en static/app.js
+
+
+def _anchos_por_contenido(doc, tbl, filas: list):
+    """
+    Columnas cortas (número, fecha, hora: ninguna celda pasa de 24 caracteres)
+    con el ancho justo y el resto de la página para las largas. Con anchos
+    iguales, en un cuadro de proyectos el título quedaba en un tercio de la
+    hoja y el número del proyecto ocupaba otro tercio.
+    """
+    sec = doc.sections[-1]
+    total = (sec.page_width - sec.left_margin - sec.right_margin) / 914400   # EMU → pulgadas
+    largos = [max(len(_strip_inline(f[c])) for f in filas) for c in range(len(filas[0]))]
+    cortas = {c: min(1.6, max(0.6, n * _ANCHO_CARACTER_IN + 0.25))
+              for c, n in enumerate(largos) if n <= _MAX_CORTA}
+    resto = len(largos) - len(cortas)
+    if not cortas or not resto:
+        return
+    libre = max(total - sum(cortas.values()), 1.5 * resto)
+    anchos = [cortas.get(c, libre * largos[c] / sum(largos[i] for i in range(len(largos)) if i not in cortas))
+              for c in range(len(largos))]
+    tbl.autofit = False
+    for fila in tbl.rows:
+        for c, celda in enumerate(fila.cells):
+            celda.width = Inches(anchos[c])
+
+
 def _add_table(doc, rows: list):
     # Todas las filas con el ancho del encabezado: una fila con más celdas
     # reventaba con IndexError (y el export entero fallaba); una con menos
@@ -103,6 +132,7 @@ def _add_table(doc, rows: list):
 
     tbl = doc.add_table(rows=len(norm), cols=ncols)
     tbl.style = 'Table Grid'
+    _anchos_por_contenido(doc, tbl, norm)
     for r_idx, row in enumerate(norm):
         for c_idx, cell_text in enumerate(row):
             cell = tbl.cell(r_idx, c_idx)
