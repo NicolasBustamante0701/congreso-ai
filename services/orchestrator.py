@@ -844,6 +844,7 @@ _NOMBRES_AMIGABLES = {
     "rastrear_proyecto": "el estado del proyecto",
     "fetch_comisiones": "el cuadro de comisiones",
     "fetch_miembros_comision": "los integrantes de la comisión",
+    "buscar_mociones": "el sistema de Mociones",
 }
 _NOMBRE_HERRAMIENTA_RE = re.compile(
     r"`?\b((?:fetch|buscar|leer|rastrear|responder)_[a-z_]+)\b`?")
@@ -1378,6 +1379,16 @@ class ChatOrchestrator:
             # demás mociones (16/10/2026). El filtro vale si el usuario lo nombró.
             if _sin_acentos_min(str(args["ministro"])) not in _sin_acentos_min(self.last_msg):
                 args = {k: v for k, v in args.items() if k != "ministro"}
+        if name == "buscar_mociones":
+            # Igual que con el ministro: un filtro que el usuario no nombró
+            # deja afuera mociones que sí pidió.
+            pedido = _sin_acentos_min(self.last_msg)
+            for campo in ("tipo", "texto"):
+                palabras = [p[:6] for p in re.findall(r"\w{4,}", _sin_acentos_min(str(args.get(campo) or "")))]
+                if campo in args and not all(p in pedido for p in palabras):
+                    args = {k: v for k, v in args.items() if k != campo}
+            if "dias" not in args and re.search(r"\besta semana\b", pedido):
+                args["dias"] = 7
         if name == "fetch_agenda_pleno" and args.get("camara"):
             # "Dame la estructura de la Agenda del Pleno" no nombra cámara,
             # pero el router mandaba camara='congreso' y salía primero la del

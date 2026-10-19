@@ -21,7 +21,7 @@ import urllib.parse
 import httpx
 
 logger = logging.getLogger("congreso-ai.scraper")
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from bs4 import BeautifulSoup
 
@@ -2356,6 +2356,23 @@ TIPO_MOCION = {
 SMOCIONES_PORTAL = "https://wb2server.congreso.gob.pe/smociones-portal/#/expediente"
 
 
+def _autores_mocion(crudo: str) -> str:
+    """
+    El sistema de Mociones trae "(P)Vidaurre Floridas, César Manuel (Fuerza
+    Popular); ...": con el normalizador de SPLEY salía "César Manuel (Fuerza
+    Popular) (P)Vidaurre Floridas". (P) marca al proponente principal.
+    """
+    salida = []
+    for parte in (crudo or "").split(";"):
+        parte = re.sub(r"^\s*\(P\)\s*", "", parte).strip()
+        m = re.match(r"^(.*?)\s*\(([^()]*)\)\s*$", parte)
+        nombre, bancada = (m.group(1), m.group(2)) if m else (parte, "")
+        nombre = _nombre_a_formato_natural(nombre) if "," in nombre else nombre
+        if nombre:
+            salida.append(f"{nombre} ({bancada})" if bancada else nombre)
+    return "; ".join(salida)
+
+
 async def fetch_mociones(tipo: str = None, camara: str = None,
                          texto: str = None, limit: int = 20):
     """
@@ -2409,7 +2426,7 @@ async def fetch_mociones(tipo: str = None, camara: str = None,
                 "fecha":      _fmt_date(m.get("fecPresentacion") or ""),
                 "sumilla":    sumilla,
                 "grupo_parlamentario": m.get("desGpar") or "",
-                "autores":    _normalizar_lista_autores(m.get("autores")) or (m.get("autores") or ""),
+                "autores":    _autores_mocion(m.get("autores")) or (m.get("autores") or ""),
                 "camara":     CAMARAS.get(m.get("_camara") or "D", ""),
                 "enlace":     f"{SMOCIONES_PORTAL}/{m.get('_camara')}/search",
             })
@@ -2417,6 +2434,57 @@ async def fetch_mociones(tipo: str = None, camara: str = None,
     out.sort(key=lambda m: m["fecha"][-4:] + m["fecha"][3:5] + m["fecha"][:2],
              reverse=True)
     return out[:limit], len(out)
+
+
+def _tipo_coincide(tipo_pedido: str, tipo_mocion: str) -> bool:
+    """"comisión especial" casa con "Conformación de Comisiones Especiales":
+    cada palabra del pedido (sus primeras 6 letras) tiene que estar."""
+    palabras = [p[:6] for p in re.findall(r"\w{4,}", _sin_acentos(tipo_pedido))]
+    tipo = _sin_acentos(tipo_mocion)
+    return bool(palabras) and all(p in tipo for p in palabras)
+
+
+async def buscar_mociones(tipo: str = None, camara: str = None, texto: str = None,
+                          dias: int = None, limit: int = 20):
+    """
+    Mociones de Orden del Día de cualquier tipo, con filtros.
+
+    Las de saludo son ~86% del registro (726 de 839 al 19/10/2026): si no se
+    piden, se dejan afuera y solo se cuentan, porque taparían a las demás.
+    """
+    todas, _ = await fetch_mociones(camara=camara, texto=texto, limit=100_000)
+    if dias:
+        desde = (ahora_lima().date() - timedelta(days=int(dias))).strftime("%Y%m%d")
+        todas = [m for m in todas if m["fecha"][-4:] + m["fecha"][3:5] + m["fecha"][:2] >= desde]
+    if tipo:
+        elegidas = [m for m in todas if _tipo_coincide(tipo, m["tipo"])]
+        saludos = 0
+    else:
+        elegidas = [m for m in todas if "SALUDO" not in _sin_acentos(m["tipo"])]
+        saludos = len(todas) - len(elegidas)
+
+    if not elegidas:
+        partes = [f"de tipo «{tipo}»" if tipo else "", f"que mencionen «{texto}»" if texto else "",
+                  f"en los últimos {dias} días" if dias else ""]
+        return {"sin_datos": True,
+                "mensaje": "El sistema de Mociones no tiene mociones "
+                           + " ".join(p for p in partes if p) + " en el periodo actual.",
+                "mociones_de_saludo": saludos}
+
+    for m in elegidas:
+        autores = [a.strip() for a in (m.get("autores") or "").split(";") if a.strip()]
+        if len(autores) > 3:
+            m["autores"] = "; ".join(autores[:3]) + f"; y {len(autores) - 3} más"
+    resultado = {
+        "fuente": "Sistema de Mociones de Orden del Día — api.congreso.gob.pe",
+        "mociones": elegidas[:limit],
+        "total": len(elegidas),
+    }
+    if saludos:
+        resultado["mociones_de_saludo"] = saludos
+        resultado["nota"] = (f"Además hay {saludos} mociones de saludo en el mismo rango, que no se "
+                             "listan: menciónalo en una línea.")
+    return resultado
 
 
 async def fetch_interpelaciones(ministro: str = None):

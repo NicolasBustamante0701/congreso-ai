@@ -8,6 +8,7 @@ STATUS_LABELS— texto de progreso que ve el usuario mientras corre cada una.
 """
 from config import logger
 from scraper import (
+    buscar_mociones,
     fetch_agenda,
     fetch_agenda_camaras,
     fetch_agenda_comisiones,
@@ -391,6 +392,39 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "buscar_mociones",
+            "description": (
+                "Mociones de Orden del Día de CUALQUIER tipo (comisiones especiales o de "
+                "investigación, declaración de interés nacional, invitación a ministros, "
+                "saludo...), del Sistema oficial de Mociones de ambas cámaras. Para "
+                "interpelaciones o censuras a ministros usar fetch_interpelaciones."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "tipo": {
+                        "type": "string",
+                        "description": "Opcional. Tipo de moción, ej. 'comisión especial', 'investigación', 'interés nacional', 'saludo'. Sin tipo trae todas menos las de saludo."
+                    },
+                    "camara": {
+                        "type": "string",
+                        "description": "Opcional. 'senado' o 'diputados'. Omitir para ambas."
+                    },
+                    "texto": {
+                        "type": "string",
+                        "description": "Opcional. Palabra que debe aparecer en la sumilla o en los autores."
+                    },
+                    "dias": {
+                        "type": "integer",
+                        "description": "Opcional. Solo las presentadas en los últimos N días (esta semana = 7)."
+                    }
+                }
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "fetch_interpelaciones",
             "description": (
                 "Mociones de interpelación a ministros, del Sistema oficial de Mociones "
@@ -444,6 +478,7 @@ TOOL_MAP = {
     "consultar_normas":        lambda args: normas.buscar(args.get("consulta") or "", args.get("norma")),
     "fetch_miembros_comision": lambda args: fetch_miembros_comision(**{k: v for k, v in args.items() if k in ("comision", "camara")}),
     "fetch_agenda_camaras":    lambda args: fetch_agenda_camaras(**{k: v for k, v in args.items() if k in ("dias", "camara")}),
+    "buscar_mociones":         lambda args: buscar_mociones(**{k: v for k, v in args.items() if k in ("tipo", "camara", "texto", "dias")}),
     "fetch_interpelaciones":   lambda args: fetch_interpelaciones(**{k: v for k, v in args.items() if k in ("ministro",)}),
     "leer_formula_legal":      lambda args: fetch_formula_legal(**{k: v for k, v in args.items() if k in ("numero_proyecto",)}),
     "responder_directo":       lambda args: _responder_directo(),
@@ -464,6 +499,7 @@ STATUS_LABELS = {
     "fetch_miembros_comision": "Consultando los integrantes de la comisión...",
     "consultar_normas":        "Consultando la Constitución y los Reglamentos...",
     "fetch_agenda_camaras":    "Revisando agenda del Congreso bicameral...",
+    "buscar_mociones":         "Buscando mociones en el sistema del Congreso...",
     "fetch_interpelaciones":   "Buscando mociones de interpelación...",
     "leer_formula_legal":      "Leyendo el texto real del proyecto...",
     "responder_directo":       "Pensando...",

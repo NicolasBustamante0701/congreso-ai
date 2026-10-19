@@ -37,6 +37,7 @@ WORKFLOWS = {
     "fetch_agenda_comisiones": load_prompt("workflow_agenda_comisiones"),
     "fetch_agenda_pleno":      load_prompt("workflow_agenda_pleno"),
     "fetch_interpelaciones":   load_prompt("workflow_interpelaciones"),
+    "buscar_mociones":         load_prompt("workflow_mociones"),
     "fetch_agenda_camaras":    load_prompt("workflow_agenda_camaras"),
     "buscar_proyectos":        load_prompt("workflow_proyectos"),
     "fetch_comisiones":        load_prompt("workflow_comisiones"),
