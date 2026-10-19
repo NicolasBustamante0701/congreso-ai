@@ -248,10 +248,13 @@ async def _indice(espera_s: float = 25) -> dict | None:
     global _bajando
     if _bajando is None or _bajando.done():
         _bajando = asyncio.create_task(_cargar())
-    try:
-        return await asyncio.wait_for(asyncio.shield(_bajando), espera_s)
-    except Exception:
-        return _cache
+    # asyncio.wait no cancela la descarga al vencer la espera ni deja el
+    # "exception in shielded future" de Python 3.14 si después falla.
+    # _cargar() deja el índice en _cache.
+    await asyncio.wait({_bajando}, timeout=espera_s)
+    if _bajando.done() and not _bajando.cancelled() and _bajando.exception():
+        logger.warning("normas: no se pudo cargar el índice: %s", _bajando.exception())
+    return _cache
 
 
 _REF_RE = re.compile(r"\bart(?:[íi]culo|\.)?\s*(\d{1,3})\b", re.IGNORECASE)

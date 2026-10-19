@@ -67,13 +67,18 @@ async def vigilar_desconexion(request, gen, ping_cada: float = 5.0):
         while True:
             if pendiente is None:
                 pendiente = asyncio.ensure_future(gen.__anext__())
-            try:
-                ev = await asyncio.wait_for(asyncio.shield(pendiente), timeout=ping_cada)
-            except asyncio.TimeoutError:
+            # asyncio.wait y no wait_for(shield(...)): en Python 3.14 cada
+            # timeout del shield deja un logger en la tarea y, al terminar el
+            # generador, salía "StopAsyncIteration exception in shielded
+            # future" como ERROR en el log (19/10/2026).
+            listos, _ = await asyncio.wait({pendiente}, timeout=ping_cada)
+            if not listos:
                 if await request.is_disconnected():
                     return
                 yield PING
                 continue
+            try:
+                ev = pendiente.result()
             except StopAsyncIteration:
                 pendiente = None
                 return

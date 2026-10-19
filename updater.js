@@ -164,7 +164,11 @@ function instalar({ reabrir }) {
 PID="$1"; NUEVO="$2"; APP="$3"; RESPALDO="$4/Diana-anterior.app"; LOG="$5"; REABRIR="$6"
 for i in $(seq 1 240); do kill -0 "$PID" 2>/dev/null || break; sleep 0.5; done
 rm -rf "$RESPALDO"
-if mv "$APP" "$RESPALDO" && /usr/bin/ditto "$NUEVO" "$APP"; then
+# Si el primer mv falla, la app sigue en su lugar y no se toca: antes caía en
+# la rama de error, que borraba "$APP" sin respaldo y Diana desaparecía.
+if ! mv "$APP" "$RESPALDO"; then
+  echo "$(date -u +%FT%TZ) actualización FALLÓ: no se pudo mover $APP; quedó la versión anterior" >> "$LOG"
+elif /usr/bin/ditto "$NUEVO" "$APP"; then
   /usr/bin/xattr -cr "$APP"
   rm -rf "$RESPALDO" "$NUEVO"
   echo "$(date -u +%FT%TZ) actualización instalada en $APP" >> "$LOG"

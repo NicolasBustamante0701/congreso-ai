@@ -100,9 +100,9 @@ async def live_transcribe(request: Request,
                 # próximo chunk terminara solo — para un stream infinito eso
                 # es "nunca": ffmpeg quedaba huérfano.
                 #
-                # Por eso sondeamos la desconexión cada 5s con wait_for,
-                # PERO protegiendo la tarea de fondo con asyncio.shield para
-                # que el timeout no la cancele — solo la cancelamos de verdad
+                # Por eso sondeamos la desconexión cada 5s con asyncio.wait,
+                # que a diferencia de wait_for no cancela la tarea de fondo
+                # al vencer el timeout — solo la cancelamos de verdad
                 # si además confirmamos que el cliente se fue. Así next_task
                 # nunca queda "corriendo a medias" cuando llamamos a
                 # gen.aclose(): o lo esperamos hasta que termine solo, o lo
@@ -133,13 +133,17 @@ async def live_transcribe(request: Request,
                 # todo lo de acá.
                 if next_task is None:
                     next_task = asyncio.ensure_future(gen.__anext__())
-                try:
-                    item = await asyncio.wait_for(asyncio.shield(next_task), timeout=5)
-                except asyncio.TimeoutError:
+                # asyncio.wait en vez de wait_for(shield(...)): mismo efecto
+                # (el timeout no cancela la tarea) sin el ERROR falso que
+                # Python 3.14 loguea al terminar una tarea "shielded".
+                listos, _ = await asyncio.wait({next_task}, timeout=5)
+                if not listos:
                     if await request.is_disconnected():
                         break
                     yield sse.PING
                     continue
+                try:
+                    item = next_task.result()
                 except StopAsyncIteration:
                     next_task = None
                     break

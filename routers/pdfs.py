@@ -6,7 +6,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from config import logger, static_file
 from scraper import fetch_destacados, fetch_proyectos
-from services import documentos
+from services import documentos, tool_cache
 from services import pdf as pdf_service
 
 router = APIRouter()
@@ -40,7 +40,13 @@ async def congreso_pdfs():
     """PDFs rápidos: destacados/citaciones de Congreso, Senado y Diputados + referencias fijas."""
     pdfs = []
     try:
-        data = await fetch_destacados()
+        # Misma caché que la herramienta del chat: sin ella cada apertura de
+        # Documentos tardaba ~30 s (la agenda del Pleno se baja y se lee entera).
+        data = tool_cache.get("buscar_destacados", {})
+        if data is None:
+            data = await fetch_destacados()
+            if not data.get("sin_datos"):
+                tool_cache.put("buscar_destacados", {}, data)
         for camara, info in data.get("camaras", {}).items():
             for clave, tipo in (("destacados", "Destacado"), ("citaciones", "Citación")):
                 for item in info.get(clave, []):

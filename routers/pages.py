@@ -1,5 +1,6 @@
 """Rutas de páginas y estado del servicio."""
 import asyncio
+import os
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Query
@@ -14,7 +15,10 @@ router = APIRouter()
 
 @router.get("/status")
 async def status():
-    return {"ready": bool(LLM_API_KEY), "ocupado": sse.EN_CURSO}
+    # "instancia": la que le pasó Electron al lanzarlo (main.js). Con ella
+    # Electron distingue a su server de otro que haya quedado en el puerto.
+    return {"ready": bool(LLM_API_KEY), "ocupado": sse.EN_CURSO,
+            "instancia": os.getenv("DIANA_INSTANCIA", "")}
 
 
 # Estructura fija de comisiones ordinarias (ver scraper.COMISIONES_SENADO /

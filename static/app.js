@@ -715,7 +715,11 @@
   }
   function exportWord(texto, btn, nombre) {
     return conBoton(btn, async () => {
-      if (api) return api.exportWord(texto);
+      if (api) {
+        const r = await api.exportWord(texto);
+        if (r?.error) throw new Error(r.error);   // cancelar devuelve { ok: false } sin error
+        return;
+      }
       const r = await fetch('/export/docx', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content: texto }) });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const url = URL.createObjectURL(await r.blob());

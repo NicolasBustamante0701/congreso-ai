@@ -954,6 +954,43 @@ def test_agenda_del_pleno_sin_camara_nombrada_no_prioriza_congreso():
     assert orch._ajustar_args("fetch_agenda_pleno", {"camara": "senado"}) == {"camara": "senado"}
 
 
+def test_agenda_de_manana_incluye_el_dia_siguiente():
+    # El router mandaba dias=1 (solo hoy) y la agenda de hoy salía como la de mañana.
+    orch = make([user("¿Qué sesiones hay mañana?")])
+    assert orch._ajustar_args("fetch_agenda_camaras", {"dias": 1}) == {"dias": 2}
+    assert orch._ajustar_args("fetch_agenda_comisiones", {}) == {"dias": 2}
+    orch = make([user("¿y pasado mañana en el Senado?")])
+    assert orch._ajustar_args("fetch_agenda_camaras", {"dias": 1, "camara": "senado"}) == \
+        {"dias": 3, "camara": "senado"}
+    orch = make([user("agenda de los próximos 7 días")])
+    assert orch._ajustar_args("fetch_agenda_camaras", {"dias": 7}) == {"dias": 7}
+
+
+@pytest.mark.parametrize("texto,esperado", [
+    ("¿Qué sesiones hay mañana?", {1}),
+    ("agenda de pasado mañana", {2}),
+    ("sesiones de hoy y mañana", {0, 1}),
+    ("¿qué se votó esta mañana?", set()),
+    ("mañana en la mañana hay pleno?", {1}),
+    ("agenda de la semana", set()),
+])
+def test_dias_pedidos(texto, esperado):
+    from services.orchestrator import _dias_pedidos
+    assert _dias_pedidos(texto) == esperado
+
+
+def test_agenda_de_manana_sin_sesiones_no_muestra_las_de_hoy():
+    from datetime import date
+
+    from services.orchestrator import _agenda_de_los_dias
+    datos = {"sesiones": [{"fecha": "19/10/2026", "tema": "A"}], "total": 1, "instruccion": "Hay 1"}
+    out = _agenda_de_los_dias(datos, {1}, date(2026, 10, 19))
+    assert out["sesiones"] == [] and "20/10/2026" in out["aviso"] and "instruccion" not in out
+    out = _agenda_de_los_dias(datos, {0}, date(2026, 10, 19))
+    assert out["sesiones"] == datos["sesiones"] and "aviso" not in out
+    assert _agenda_de_los_dias(datos, set(), date(2026, 10, 19)) is datos
+
+
 def test_interpelaciones_sin_ministro_nombrado_no_filtra():
     orch = make([user("Indicame si se ha presentado alguna moción de interpelación a algún Ministro")])
     assert orch._ajustar_args("fetch_interpelaciones", {"ministro": "Interior"}) == {}
@@ -1037,6 +1074,20 @@ def test_filtro_reconoce_numeros_en_letras_y_quita_calculos():
     assert n == 1 and "72 horas" in limpio and "32 de 130" not in limpio
 
 
+def test_filtro_no_quita_dos_tercios_si_la_norma_lo_dice():
+    # Reforma constitucional (19/10/2026): la fuente pasaba a "2 tercios" y la
+    # respuesta seguía diciendo "dos tercios": la línea se borraba siempre.
+    from services.orchestrator import (
+        _canon,
+        _numeros_en_letras_a_cifras,
+        _quitar_no_verificable,
+    )
+    fuentes = _canon(_numeros_en_letras_a_cifras(
+        "artículo 206. ... votación favorable superior a los dos tercios del número legal"))
+    limpio, n = _quitar_no_verificable("- Sin referéndum: dos tercios en dos legislaturas.\n", fuentes)
+    assert n == 0 and "dos tercios" in limpio
+
+
 def test_filtro_acepta_art_abreviado_si_la_norma_dice_articulo():
     from services.orchestrator import _canon, _quitar_no_verificable
     fuentes = _canon('{"articulo": "132", "texto": "artículo 132. la cámara de diputados hace efectiva…"}')
@@ -1078,3 +1129,10 @@ def test_extension_larga_da_mas_margen_en_conversacion():
     media = ChatOrchestrator([user("explícame qué es una cuestión de confianza")])
     media._analyze()
     assert larga._phase3_max_tokens() > media._phase3_max_tokens()
+
+
+def test_link_con_llaves_se_arregla():
+    # Gemini escribió "[Ver documento]({https://...})" (19/10/2026).
+    from services.orchestrator import _LINK_CON_LLAVES_RE
+    t = "| [Ver documento]({https://comunicaciones.congreso.gob.pe/a.pdf}) |"
+    assert _LINK_CON_LLAVES_RE.sub(r"](\1)", t) == "| [Ver documento](https://comunicaciones.congreso.gob.pe/a.pdf) |"

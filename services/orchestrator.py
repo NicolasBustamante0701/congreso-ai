@@ -365,6 +365,43 @@ def _mociones_de_la_semana(resultado, desde: str):
     return out
 
 
+def _dias_pedidos(texto: str) -> set[int]:
+    """
+    Días relativos a hoy que nombra el pedido: hoy=0, mañana=1, pasado
+    mañana=2. "Esta mañana" o "en la mañana" son la franja horaria, no el día.
+    """
+    t = re.sub(r"\b(?:esta|en la|por la|de la|a la)\s+mañana\b", " ", (texto or "").lower())
+    dias = set()
+    if re.search(r"\bpasado\s+mañana\b", t):
+        dias.add(2)
+        t = re.sub(r"\bpasado\s+mañana\b", " ", t)
+    if re.search(r"\bmañana\b", t):
+        dias.add(1)
+    if re.search(r"\bhoy\b", t):
+        dias.add(0)
+    return dias
+
+
+def _agenda_de_los_dias(resultado, dias: set[int], hoy) -> object:
+    """
+    Deja en la agenda solo las sesiones de los días pedidos. Sin esto, si
+    mañana no tenía nada publicado, el modelo presentaba la agenda de hoy
+    como la de mañana (19/10/2026).
+    """
+    if not dias or not isinstance(resultado, dict) or not isinstance(resultado.get("sesiones"), list):
+        return resultado
+    fechas = [(hoy + timedelta(days=d)).strftime("%d/%m/%Y") for d in sorted(dias)]
+    sesiones = [s for s in resultado["sesiones"] if s.get("fecha") in fechas]
+    out = {k: v for k, v in resultado.items() if k not in ("instruccion", "total", "total_sesiones")}
+    out["sesiones"] = sesiones
+    out["total"] = len(sesiones)
+    if not sesiones:
+        out["aviso"] = (f"La agenda oficial no tiene sesiones publicadas para el {' ni el '.join(fechas)}, "
+                        "que es lo que pidió el usuario. Dilo así y no muestres sesiones de otros días "
+                        "como si fueran de esa fecha.")
+    return out
+
+
 def _nombre_comision(sesion: dict) -> str:
     """La comisión que organiza, sin la línea de la presidencia."""
     for texto in (sesion.get("organiza") or "", sesion.get("tema") or ""):
@@ -740,6 +777,11 @@ def _numeros_mencionados(linea: str) -> set[int]:
     return nums
 
 
+# Gemini a veces escribe "[Ver documento]({https://...})": el link no funciona
+# en la app y el filtro de links no lo reconoce (19/10/2026).
+_LINK_CON_LLAVES_RE = re.compile(r"\]\(\{(https?://[^\s{}()]+)\}\)")
+
+
 def _desenlazar(texto: str, permitidos: set[str]) -> str:
     """
     Quita los links del Congreso que no están en los datos ni son portales
@@ -857,7 +899,10 @@ def _quitar_no_verificable(texto: str, fuentes_min: str) -> tuple[str, int]:
     salida = []
     for linea in texto.splitlines(keepends=True):
         # Por número exacto: "5 días" no vale porque la fuente diga "15 días".
-        if any(not re.search(r"(?<![\d/])" + re.escape(_canon(m.group(0))) + r"(?![\d])", fuentes_min)
+        # El detalle pasa por la misma conversión que las fuentes: si no,
+        # "dos tercios" se buscaba contra "2 tercios" y se borraba siempre.
+        if any(not re.search(r"(?<![\d/])" + re.escape(_canon(_numeros_en_letras_a_cifras(m.group(0).lower())))
+                             + r"(?![\d])", fuentes_min)
                for m in _DETALLE_NO_VERIFICABLE_RE.finditer(linea)):
             quitadas += 1
             continue
@@ -925,6 +970,7 @@ class ChatOrchestrator:
         self.extension = extension if extension in EXTENSIONES else "media"
         ahora = ahora_lima()
         self.hoy = ahora.strftime("%d/%m/%Y")
+        self.hoy_fecha = ahora.date()
         # Ventana del resumen semanal: los 7 días que terminan hoy.
         self.desde = (ahora - timedelta(days=RESUMEN_DIAS)).strftime("%d/%m/%Y")
         self.system_base = system_con_fecha(self.hoy)
@@ -1309,6 +1355,9 @@ class ChatOrchestrator:
                 result = _agenda_pleno_de_la_semana(result, self.desde)
             elif name == "fetch_interpelaciones" and self.is_resumen:
                 result = _mociones_de_la_semana(result, self.desde)
+            elif name in ("fetch_agenda_camaras", "fetch_agenda_comisiones") and not self.is_resumen:
+                result = _agenda_de_los_dias(result, _dias_pedidos(self.last_msg), self.hoy_fecha)
+                self.ultimos_resultados[name] = result
             elif name == "buscar_proyectos" and self.proyectos_agrupados:
                 result = _compactar_para_agrupado(result)
                 if isinstance(result, dict) and isinstance(result.get("items"), list):
@@ -1338,6 +1387,16 @@ class ChatOrchestrator:
                 str(args["camara"]).lower().strip(), str(args["camara"]).lower()[:6])
             if raiz not in self.last_msg.lower():
                 args = {k: v for k, v in args.items() if k != "camara"}
+        if name in ("fetch_agenda_camaras", "fetch_agenda_comisiones"):
+            # "¿Qué sesiones hay mañana?": el router mandaba dias=1, que es
+            # solo hoy, y la agenda de hoy salía como si fuera la de mañana
+            # (19/10/2026). dias cuenta desde hoy inclusive.
+            minimo = max(_dias_pedidos(self.last_msg), default=0) + 1
+            try:
+                dias = int(args.get("dias") or 2)   # 2: default de las dos funciones
+            except (ValueError, TypeError):
+                dias = 2
+            args["dias"] = max(dias, minimo)
         if name != "buscar_proyectos":
             return args
         # El pedido decía "últimos N días": que el router no pierda la ventana.
@@ -1488,6 +1547,7 @@ class ChatOrchestrator:
 
         def limpio(texto):
             texto = _RELLENO_RE.sub(" ", texto)
+            texto = _LINK_CON_LLAVES_RE.sub(r"](\1)", texto)
             if filtrar:
                 texto, n = _quitar_no_verificable(texto, fuentes_min)
                 omitidas["n"] += n

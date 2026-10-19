@@ -85,6 +85,18 @@ async def test_congreso_pdfs_shape(client):
     assert isinstance(data["pdfs"], list)
 
 
+@pytest.mark.asyncio
+async def test_congreso_pdfs_segunda_apertura_sale_de_cache(client):
+    # Cada apertura de Documentos tardaba ~30 s: la fuente se consultaba siempre.
+    fake = AsyncMock(return_value={"camaras": {"Senado": {"destacados": [], "citaciones": [
+        {"titulo": "Citación", "enlace": "https://senado.congreso.gob.pe/c.pdf"}]}}})
+    with patch("routers.pdfs.fetch_destacados", new=fake):
+        r1 = await client.get("/congreso-pdfs")
+        r2 = await client.get("/congreso-pdfs")
+    assert fake.await_count == 1
+    assert r1.json()["pdfs"] == r2.json()["pdfs"]
+
+
 # ── /dashboard-metrics ────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_dashboard_usa_el_total_real_no_el_truncado(client):
@@ -282,3 +294,20 @@ async def test_chat_pasa_la_extension_al_orquestador(client):
     with patch("routers.chat.ChatOrchestrator", Falso), patch("routers.chat.LLM_API_KEY", "k"):
         await client.post("/chat", json={"messages": [{"role": "user", "content": "hola"}], "extension": "corta"})
     assert recibido["extension"] == "corta"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cuerpo", [
+    b"{no es json",
+    b"{}",
+    b'{"messages": []}',
+    b'{"messages": "hola"}',
+    b'{"messages": [{"role": "user", "content": "   "}]}',
+    b'{"messages": ["hola"]}',
+])
+async def test_chat_sin_pregunta_no_llama_al_modelo(client, cuerpo):
+    # Antes: JSON roto daba 500 y una lista vacía igual gastaba una llamada al modelo.
+    with patch("routers.chat.ChatOrchestrator") as orq, patch("routers.chat.LLM_API_KEY", "k"):
+        r = await client.post("/chat", content=cuerpo, headers={"Content-Type": "application/json"})
+    assert r.status_code == 400 and "error" in r.json()
+    orq.assert_not_called()

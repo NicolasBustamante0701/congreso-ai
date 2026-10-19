@@ -33,6 +33,8 @@ if (process.platform === 'linux') app.setDesktopName('congreso-ai.desktop');
 const updater = require('./updater');
 
 const PORT = Number(process.env.DIANA_PORT) || 8732;   // puerto único para no chocar con adam
+// Identifica al server de este arranque (ver waitReady).
+const INSTANCIA = require('crypto').randomUUID();
 let   win  = null;
 let   py   = null;
 
@@ -106,6 +108,16 @@ function decryptKey(stored, field) {
   }
 }
 
+// Escritura atómica: se escribe a un temporal y se renombra. Con
+// writeFileSync directo, un cierre forzado o un corte a mitad de camino
+// dejaba el JSON truncado; load-history lo leía como [] y el siguiente
+// guardado pisaba todo el historial.
+function escribirAtomico(archivo, datos, opciones) {
+  const tmp = `${archivo}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, datos, opciones);
+  fs.renameSync(tmp, archivo);
+}
+
 function readAiSettings() {
   try { return JSON.parse(fs.readFileSync(AI_SETTINGS_FILE, 'utf8')) || {}; }
   catch { return {}; }
@@ -151,7 +163,8 @@ function startServer() {
   // transcribir no quedan huérfanos consumiendo red y CPU.
   const proc = spawn(exe, args, {
     env: { ...process.env, ...aiEnv(), PORT: String(PORT), DIANA_LOG_DIR: app.getPath('logs'),
-           DIANA_DATA_DIR: app.getPath('userData'), DIANA_PARENT_PID: String(process.pid) },
+           DIANA_DATA_DIR: app.getPath('userData'), DIANA_PARENT_PID: String(process.pid),
+           DIANA_INSTANCIA: INSTANCIA },
     cwd,
     detached: process.platform !== 'win32',
   });
@@ -286,14 +299,33 @@ const READY_RETRIES = 300;
 // que la ventana no parezca colgada.
 const SLOW_AFTER_MS = 12000;
 
+// Solo cuenta como listo el server que lanzó ESTA app: antes cualquier cosa
+// que respondiera en el puerto servía, y con un server viejo huérfano ahí
+// (visto el 19/10/2026: un build del 13/10 seguía escuchando) la ventana
+// cargaba ese código viejo mientras el nuevo moría por puerto ocupado.
+let avisoPuertoAjeno = false;
 function waitReady(retries, cb, startedAt = Date.now()) {
   if (Date.now() - startedAt > SLOW_AFTER_MS) notifySlowStart();
 
-  http.get(`http://localhost:${PORT}/`, () => cb(true))
-    .on('error', () => {
-      if (retries > 0) setTimeout(() => waitReady(retries - 1, cb, startedAt), 400);
-      else             cb(false);
+  const reintentar = () => {
+    if (retries > 0) setTimeout(() => waitReady(retries - 1, cb, startedAt), 400);
+    else             cb(false);
+  };
+  http.get(`http://localhost:${PORT}/status`, res => {
+    let cuerpo = '';
+    res.setEncoding('utf8');
+    res.on('data', d => { cuerpo += d; });
+    res.on('end', () => {
+      let instancia = null;
+      try { instancia = JSON.parse(cuerpo).instancia; } catch { /* no es Diana */ }
+      if (instancia === INSTANCIA) return cb(true);
+      if (!avisoPuertoAjeno) {
+        avisoPuertoAjeno = true;
+        logMain(`el puerto ${PORT} lo ocupa otro proceso (instancia=${instancia ?? 'desconocida'})`);
+      }
+      reintentar();
     });
+  }).on('error', reintentar);
 }
 
 // Cambia el subtítulo de la pantalla de carga una sola vez.
@@ -476,6 +508,8 @@ ipcMain.handle('export-word', async (event, content) => {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ content }),
   });
+  // Sin esto, un error del server se guardaba como .docx y se informaba "ok".
+  if (!res.ok) return { ok: false, error: `El servidor respondió ${res.status}` };
   const buf = Buffer.from(await res.arrayBuffer());
   fs.writeFileSync(filePath, buf);
   return { ok: true };
@@ -502,7 +536,7 @@ ipcMain.handle('ai-settings-save', async (event, { provider, apiKey, groqKey, mi
   if (typeof groqKey === 'string' && groqKey.trim()) s.groqKey = encryptKey(groqKey.trim(), 'groqKey');
   if (typeof mistralKey === 'string' && mistralKey.trim()) s.mistralKey = encryptKey(mistralKey.trim(), 'mistralKey');
   try {
-    fs.writeFileSync(AI_SETTINGS_FILE, JSON.stringify(s), { encoding: 'utf8', mode: 0o600 });
+    escribirAtomico(AI_SETTINGS_FILE, JSON.stringify(s), { encoding: 'utf8', mode: 0o600 });
   } catch (e) {
     return { ok: false, error: `No se pudo guardar: ${e.message}` };
   }
@@ -524,7 +558,7 @@ const HISTORY_FILE = path.join(app.getPath('userData'), 'chat-history.json');
 
 ipcMain.handle('save-history', (event, data) => {
   try {
-    fs.writeFileSync(HISTORY_FILE, JSON.stringify(data), 'utf8');
+    escribirAtomico(HISTORY_FILE, JSON.stringify(data), 'utf8');
     return { ok: true };
   } catch (e) {
     return { ok: false, error: String(e) };
