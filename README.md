@@ -163,6 +163,17 @@ O directo: `xattr -dr com.apple.quarantine "/Applications/Diana.app"`.
 
 Después de eso **no hay que volver a instalar nada**: Diana se actualiza sola.
 
+### Sacar las API keys
+
+Todas son gratis. Se pegan en **Ajustes → Inteligencia artificial** y se toca
+**Probar y guardar**; la app tiene los mismos links debajo de cada campo.
+
+| Key | Para qué | Dónde se saca |
+|---|---|---|
+| Gemini (obligatoria) | El chat | https://aistudio.google.com/app/apikey |
+| Groq | Transcribir sesiones | https://console.groq.com/keys |
+| Mistral (recomendada) | Respaldo cuando Gemini está saturado | https://console.mistral.ai/api-keys |
+
 ## Publicar una versión
 
 Cada push a `main` publica una versión (`.github/workflows/release.yml`):

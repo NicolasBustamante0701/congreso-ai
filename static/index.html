@@ -323,14 +323,15 @@
                   <div>
                     <label class="d-label" for="ai-key">API key</label>
                     <input class="d-input" id="ai-key" type="password" autocomplete="off" spellcheck="false" placeholder="Pega tu API key">
-                    <button class="link-btn" id="ai-key-help" type="button">¿Cómo consigo una key gratis?</button>
+                    <button class="link-btn" id="ai-key-help" type="button">Sacar la key de Gemini → aistudio.google.com/app/apikey</button>
                   </div>
                 </div>
                 <label class="d-label" for="ai-groq-key">Key de Groq para transcribir sesiones <span class="opcional">(opcional si el chat ya usa Groq)</span></label>
                 <input class="d-input" id="ai-groq-key" type="password" autocomplete="off" spellcheck="false" placeholder="Solo para la transcripción de sesiones">
+                <button class="link-btn" id="ai-groq-help" type="button">Sacar la key gratis de Groq → console.groq.com/keys</button>
                 <label class="d-label" for="ai-mistral-key">Key de respaldo de Mistral <span class="opcional">(gratis, recomendada)</span></label>
                 <input class="d-input" id="ai-mistral-key" type="password" autocomplete="off" spellcheck="false" placeholder="Responde cuando Gemini está saturado">
-                <button class="link-btn" id="ai-mistral-help" type="button">¿Cómo consigo la key gratis de Mistral?</button>
+                <button class="link-btn" id="ai-mistral-help" type="button">Sacar la key gratis de Mistral → console.mistral.ai/api-keys</button>
                 <p class="d-hint">Las keys se guardan cifradas con el llavero de macOS, solo en esta computadora. Si el llavero no está disponible, quedan en memoria hasta cerrar la app y no se escriben al disco.</p>
                 <div class="ai-msg" id="ai-msg" role="status"></div>
                 <div class="ajuste-acciones">

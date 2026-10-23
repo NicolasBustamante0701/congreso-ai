@@ -1116,6 +1116,11 @@
     openai: 'https://platform.openai.com/api-keys', cerebras: 'https://cloud.cerebras.ai',
     mistral: 'https://console.mistral.ai/api-keys',
   };
+  // El link muestra la dirección: quien recibe la app sabe a dónde va antes de tocarlo.
+  function aiKeyHelpTexto() {
+    const url = AI_KEY_URLS[aiProvider.value];
+    $('ai-key-help').textContent = `Sacar la key de ${NOMBRE_PROV[aiProvider.value] || aiProvider.value} → ${url.replace(/^https:\/\//, '')}`;
+  }
   function aiSetMsg(text, kind) { aiMsg.textContent = text || ''; aiMsg.className = 'ai-msg' + (kind ? ' ' + kind : ''); }
 
   async function aiRefresh() {
@@ -1123,6 +1128,7 @@
     const local = api?.aiSettingsGet ? await api.aiSettingsGet() : null;
     if (local?.provider) aiProvider.value = local.provider;
     else if (server?.provider) aiProvider.value = server.provider;
+    aiKeyHelpTexto();
     aiClear.hidden = !local?.hasKey;
     aiKey.placeholder = local?.hasKey ? `Guardada (termina en …${local.keyHint}). Pega otra para cambiarla` : 'Pega tu API key';
     aiGroqKey.placeholder = local?.hasGroqKey ? 'Guardada. Pega otra para cambiarla' : 'Solo para la transcripción de sesiones';
@@ -1186,6 +1192,8 @@
     aiKey.addEventListener('keydown', (e) => { if (e.key === 'Enter') saveAiSettings(); });
     $('ai-key-help').addEventListener('click', () => api.openExternal(AI_KEY_URLS[aiProvider.value]));
     $('ai-mistral-help').addEventListener('click', () => api.openExternal(AI_KEY_URLS.mistral));
+    $('ai-groq-help').addEventListener('click', () => api.openExternal(AI_KEY_URLS.groq));
+    aiProvider.addEventListener('change', aiKeyHelpTexto);
     aiClear.addEventListener('click', async () => {
       if (!confirm('¿Borrar tus API keys de esta computadora?')) return;
       aiClear.disabled = true;
