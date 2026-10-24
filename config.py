@@ -159,12 +159,6 @@ _PROVIDERS = {
         # primer token, por eso tiene su propio timeout en llm.stream).
         "modelos_respaldo": ["gemini-3-flash-preview"],
     },
-    "cerebras": {
-        "base_url":     "https://api.cerebras.ai/v1",
-        "api_key":      os.getenv("CEREBRAS_API_KEY", ""),
-        "router_model": "gpt-oss-120b",
-        "main_model":   "gpt-oss-120b",
-    },
     # Plan gratis "Experiment" de Mistral: sin tarjeta (solo SMS), ~1000
     # millones de tokens al mes y 128k de contexto. Es el respaldo que entra
     # cuando Gemini gratis está saturado: Groq gratis corta en 8000 tokens
@@ -199,7 +193,7 @@ PROVIDERS = _PROVIDERS
 # Si el proveedor activo falla o no responde, se prueba con los demás que
 # tengan key cargada, en este orden. Groq casi siempre está (su key es
 # obligatoria para Whisper). LLM_FALLBACKS=none lo desactiva; una lista
-# ("groq,cerebras") fija el orden.
+# ("groq,mistral") fija el orden.
 _fallbacks_env = os.getenv("LLM_FALLBACKS", "").strip().lower()
 if _fallbacks_env == "none":
     _orden = []
@@ -208,7 +202,7 @@ elif _fallbacks_env:
 else:
     # Mistral antes que Groq: acepta las consultas grandes que Groq gratis
     # rechaza con 413.
-    _orden = ["mistral", "groq", "gemini", "cerebras", "openai"]
+    _orden = ["mistral", "groq", "gemini", "openai"]
 LLM_FALLBACKS = [p for p in _orden
                  if p in _PROVIDERS and p != LLM_PROVIDER and _PROVIDERS[p]["api_key"]]
 

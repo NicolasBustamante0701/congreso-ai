@@ -78,7 +78,7 @@ function logMain(...parts) {
 const AI_SETTINGS_FILE = path.join(app.getPath('userData'), 'ai-settings.json');
 const PROVIDER_ENV = {
   gemini: 'GEMINI_API_KEY', groq: 'GROQ_API_KEY',
-  openai: 'OPENAI_API_KEY', cerebras: 'CEREBRAS_API_KEY',
+  openai: 'OPENAI_API_KEY',
   mistral: 'MISTRAL_API_KEY',
 };
 

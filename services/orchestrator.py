@@ -118,6 +118,29 @@ def _corregir_numero_copiado(args: dict, pedido: str) -> dict:
     return args
 
 
+def _camara_solo_si_se_nombro(args: dict, pedido: str) -> dict:
+    """
+    El filtro `camara` de buscar_proyectos vale solo si el usuario nombró la
+    cámara. Visto con Mistral (open-mistral-nemo) el 24/10/2026: "proyectos
+    presentados esta semana sobre salud" salió con camara='congreso' (el
+    Congreso unicameral 2021-2026) y Diana dijo que no había ninguno, cuando
+    en Diputados había varios. 'congreso' además exige que se pida el periodo
+    anterior: "proyectos del Congreso" se dice del Congreso entero.
+    """
+    camara = _sin_acentos_min(str(args.get("camara") or ""))
+    texto = _sin_acentos_min(pedido or "")
+    if camara.startswith("diputad"):
+        nombrada = "diputad" in texto
+    elif camara.startswith("senad"):
+        nombrada = "senad" in texto
+    else:
+        nombrada = bool(re.search(r"2021\s*-\s*2026|unicameral|periodo anterior", texto))
+    if nombrada:
+        return args
+    logger.warning("Filtro camara=%r que el usuario no pidió: se quita", args.get("camara"))
+    return {k: v for k, v in args.items() if k != "camara"}
+
+
 # Preguntas de procedimiento: se responden con la Constitución y los
 # Reglamentos (services/normas.py), no con la memoria del modelo.
 _PROCEDIMIENTO_TEMA_RE = re.compile(
@@ -382,6 +405,52 @@ def _dias_pedidos(texto: str) -> set[int]:
     return dias
 
 
+_AGENDA_RE = re.compile(r"\bagendas?\b", re.IGNORECASE)
+_SESION_RE = re.compile(r"\bsesi[oó]n(?:es)?\b", re.IGNORECASE)
+_CUANDO_RE = re.compile(
+    r"\b\d{1,2}/\d{1,2}\b|\bhoy\b|\bmañana\b|\besta semana\b|\bpr[oó]xim[oa]s?\b"
+    r"|\blunes\b|\bmartes\b|\bmi[eé]rcoles\b|\bjueves\b|\bviernes\b|\bs[aá]bado\b|\bdomingo\b",
+    re.IGNORECASE)
+
+
+def _pide_agenda(texto: str) -> bool:
+    """El pedido es sobre la agenda, o sobre una sesión con fecha o día."""
+    texto = texto or ""
+    return bool(_AGENDA_RE.search(texto)
+                or (_SESION_RE.search(texto) and _CUANDO_RE.search(texto)))
+
+
+# Más allá de esto la agenda oficial no publica sesiones.
+_AGENDA_DIAS_MAX = 31
+
+
+def _dias_hasta_fecha_pedida(texto: str, hoy) -> int | None:
+    """
+    Si el pedido nombra una fecha futura (26/10 o 26/10/2026), cuántos días
+    de agenda hay que traer para que entre: hoy + los que faltan. Visto el
+    24/10/2026: "¿qué se va a tratar en la sesión ... el 26/10/2026?" salía
+    con el default de 2 días (hoy y mañana) y Diana decía que no existía.
+    """
+    from datetime import date
+    hasta = None
+    for d, m, a in re.findall(r"\b(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?\b", texto or ""):
+        anio = int(a) if a else hoy.year
+        anio += 2000 if anio < 100 else 0
+        try:
+            f = date(anio, int(m), int(d))
+        except ValueError:
+            continue
+        if not a and f < hoy:          # "05/01" pedido en diciembre: el año que viene
+            try:
+                f = date(anio + 1, int(m), int(d))
+            except ValueError:
+                continue
+        delta = (f - hoy).days
+        if 0 <= delta < _AGENDA_DIAS_MAX:
+            hasta = max(hasta or 0, delta + 1)
+    return hasta
+
+
 def _agenda_de_los_dias(resultado, dias: set[int], hoy) -> object:
     """
     Deja en la agenda solo las sesiones de los días pedidos. Sin esto, si
@@ -519,7 +588,7 @@ RESUMEN_CONTEXTO_DIAS = 15
 # Herramientas fijas del resumen semanal — no se le deja la elección al
 # router. Dejado a su criterio con tool_choice="required" terminaba llamando
 # 7-8 herramientas de golpe (fetch_interpelaciones, fetch_comisiones,
-# fetch_comisiones, buscar_agenda...) y reventaba el límite del proveedor,
+# fetch_comisiones, fetch_agenda_camaras...) y reventaba el límite del proveedor,
 # tumbando la función entera. Pasó con Groq y su TPM de 6k; con Gemini el techo
 # es de requests por día, así que 7-8 llamadas por resumen queman la cuota
 # igual de rápido y la lista fija sigue haciendo falta.
@@ -527,10 +596,9 @@ RESUMEN_CONTEXTO_DIAS = 15
 # fetch_interpelaciones sí se agregó a la lista fija: es la fuente de la
 # noticia política más caliente de la semana (mociones contra ministros) y
 # sin ella el resumen puede terminar hablando solo de trámite institucional
-# mientras ignora lo más relevante — pasó en producción. Las otras 3
-# (fetch_comisiones y buscar_agenda) siguen afuera: no aportan
-# nada nuevo que buscar_destacados/fetch_agenda_pleno no cubran ya para un
-# resumen semanal, así que agregarlas sería puro peso extra sin beneficio.
+# mientras ignora lo más relevante — pasó en producción. fetch_comisiones
+# sigue afuera: no aporta nada nuevo que buscar_destacados/fetch_agenda_pleno
+# no cubran ya para un resumen semanal, así que agregarla sería puro peso extra.
 RESUMEN_TOOLS = (
     ("buscar_proyectos",       {"dias": RESUMEN_CONTEXTO_DIAS}),
     ("buscar_destacados",      {}),
@@ -1285,6 +1353,18 @@ class ChatOrchestrator:
                       if tc.function.name != "responder_directo"]
         real_calls = self._deduplicar_tool_calls(real_calls)
         if not real_calls:
+            if _pide_agenda(self.last_msg):
+                # Una sesión o la agenda no se contestan de memoria. Visto el
+                # 24/10/2026: con Gemini saturado (503), gemini-3-flash-preview
+                # eligió responder_directo para "¿qué se va a tratar en la
+                # sesión ... el 26/10/2026? Busca la agenda" y Diana dijo que
+                # no la encontró sin haber consultado nada.
+                logger.warning("El router no consultó la agenda pedida: se consulta igual")
+                llamadas = [("fetch_agenda_camaras",
+                             self._ajustar_args("fetch_agenda_camaras", {"dias": 14}))]
+                async for ev in self._ejecutar_herramientas(llamadas):
+                    yield ev
+                return
             self.solo_responder_directo = True
             return
 
@@ -1373,6 +1453,12 @@ class ChatOrchestrator:
 
     def _ajustar_args(self, name: str, args: dict) -> dict:
         args = _corregir_numero_copiado(args, self.last_msg)
+        if name == "buscar_proyectos" and args.get("camara"):
+            args = _camara_solo_si_se_nombro(args, self.last_msg)
+        if name in ("fetch_agenda_camaras", "fetch_agenda_comisiones"):
+            necesarios = _dias_hasta_fecha_pedida(self.last_msg, self.hoy_fecha)
+            if necesarios and int(args.get("dias") or 2) < necesarios:
+                args = {**args, "dias": necesarios}
         if name == "fetch_interpelaciones" and args.get("ministro"):
             # "¿Hay alguna moción contra algún ministro?": Mistral llamaba con
             # ministro='Interior' y 'Salud' por su cuenta y se perdían las
@@ -1728,7 +1814,7 @@ class ChatOrchestrator:
         """
         Agenda armada directo de los datos oficiales, para cuando ningún
         proveedor de IA puede redactar (16/10/2026, con Mistral degenerando:
-        Groq sin responder, Gemini sin cuota y Cerebras pidiendo pago). Solo
+        Groq sin responder, Gemini sin cuota). Solo
         para la agenda: es una tabla, no necesita redacción.
         """
         datos = self._datos_agenda()

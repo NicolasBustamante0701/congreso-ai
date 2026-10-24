@@ -224,9 +224,10 @@ def _antiguedad_dias(pubdate_raw: str):
 # HTML llega vacío con "Loading..." porque lo rellena JavaScript.
 NOTICIAS_API = "https://comunicaciones.congreso.gob.pe/wp-json/noticias/v1"
 
-# `destacado=` acepta una cámara. "diputados" responde 404 con code
-# "no_destacados" cuando no hay ninguna marcada — es "vacío", no un fallo.
-_NOTICIAS_CAMARAS = ("congreso", "senado", "diputados")
+# `destacado=` acepta una cámara, en singular para Diputados: "diputado" es
+# lo que pide la portada de diputados.congreso.gob.pe ("diputados" da 404).
+# Un 404 con code "no_destacados" es "vacío", no un fallo.
+_NOTICIAS_CAMARAS = ("congreso", "senado", "diputado")
 
 
 async def _noticias_oficiales() -> list[dict]:
@@ -864,39 +865,6 @@ async def fetch_sesiones(comision=None, fecha=None, limit=20):
 
 # ── Agenda ─────────────────────────────────────────────────────
 
-async def fetch_agenda():
-    query = "agenda parlamentaria congreso perú sesiones pleno 2026"
-    noticias = await _noticias_congreso(query, max_results=15)
-
-    if noticias:
-        return {
-            "fuente": "Noticias recientes del Congreso",
-            "total": len(noticias),
-            "items": noticias,
-        }
-
-    # Fallback: scrape the agenda page HTML
-    try:
-        async with _client() as c:
-            r = await c.get(f"{CONGRESO}/actas-agendas-y-acuerdos/"
-                            "pleno-y-comision-permanente/agenda-del-pleno/")
-            soup = BeautifulSoup(r.text, "html.parser")
-            for tag in soup.find_all(["nav", "header", "footer", "script", "style"]):
-                tag.decompose()
-            text = soup.get_text(separator="\n", strip=True)
-            lines = [l for l in text.split("\n") if len(l.strip()) > 20]
-            if lines:
-                return {"fuente": "congreso.gob.pe",
-                        "contenido": "\n".join(lines[:60])}
-    except Exception as _e:
-        logger.warning("fetch_agenda: %s: %s", type(_e).__name__, _e)
-
-    return {
-        "error": "No se pudo obtener la agenda parlamentaria. "
-                 "Consulta https://www.congreso.gob.pe/actas-agendas-y-acuerdos/"
-    }
-
-
 # ── Destacados ─────────────────────────────────────────────────
 
 def _extract_widget_items(soup, widget_class):
@@ -938,8 +906,15 @@ async def _scrape_destacados_camara(url: str):
     # widgets se renderizan en el servidor con el literal "No hay publicaciones
     # para mostrar" cuando están vacíos — antes eso se trataba como fallo y se
     # devolvían notas de prensa de medios como si fueran documentos oficiales.
+    # Desde oct-2026 Diputados ya no imprime ese literal: deja el <ul> vacío.
+    # Si los dos widgets están en la página pero sin links, también es vacío;
+    # solo es "HTML cambió" cuando los widgets desaparecen.
     vacio_declarado = "No hay publicaciones para mostrar" in r.text
-    if not destacados and not citaciones and not vacio_declarado:
+    widgets_presentes = all(
+        soup.find("div", class_=cls)
+        for cls in ("widget_wc_widget_feature_article", "widget_wc_widget_citation_article")
+    )
+    if not destacados and not citaciones and not (vacio_declarado or widgets_presentes):
         raise Exception("sin items y sin aviso de vacío — el HTML cambió")
 
     return {"fuente": url, "destacados": destacados, "citaciones": citaciones}

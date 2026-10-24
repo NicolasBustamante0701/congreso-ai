@@ -4,7 +4,7 @@ con reintento sobre rate limit.
 
 Es agnóstica del proveedor: habla siempre por el SDK de `openai` contra el
 endpoint que fije config.LLM_PROVIDER — hoy Gemini, y también sirven Groq,
-Cerebras y OpenAI, que exponen el mismo formato de chat completions. Solo
+Mistral y OpenAI, que exponen el mismo formato de chat completions. Solo
 cambian la URL base, la key y los modelos (ver config.py).
 
 OJO, no confundir con Groq-el-de-Whisper: la transcripción de audio
@@ -127,7 +127,7 @@ def parse_retry_seconds(e) -> float:
 
 def is_rate_limit(e) -> bool:
     s = str(e).lower()
-    # Un 402 (cuenta sin saldo, ej. Cerebras) trae "quota" en el texto pero
+    # Un 402 (cuenta sin saldo) trae "quota" en el texto pero
     # esperar no lo arregla: reintentar solo sumaba 24 s antes del error.
     if "error code: 402" in s or "payment_required" in s:
         return False
@@ -144,7 +144,6 @@ def is_rate_limit(e) -> bool:
 _ENV_KEY = {
     "groq": "GROQ_API_KEY",
     "gemini": "GEMINI_API_KEY",
-    "cerebras": "CEREBRAS_API_KEY",
     "mistral": "MISTRAL_API_KEY",
     "openai": "OPENAI_API_KEY",
 }

@@ -9,7 +9,6 @@ STATUS_LABELS— texto de progreso que ve el usuario mientras corre cada una.
 from config import logger
 from scraper import (
     buscar_mociones,
-    fetch_agenda,
     fetch_agenda_camaras,
     fetch_agenda_comisiones,
     fetch_agenda_pleno,
@@ -106,17 +105,6 @@ TOOLS = [
                         "description": "Fecha en formato YYYY-MM-DD"
                     },
                 }
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "buscar_agenda",
-            "description": "Agenda parlamentaria general: convocatorias, fechas y horarios de próximas sesiones.",
-            "parameters": {
-                "type": "object",
-                "properties": {}
             }
         }
     },
@@ -370,7 +358,8 @@ TOOLS = [
         "function": {
             "name": "fetch_agenda_camaras",
             "description": (
-                "Sesiones del Senado, Diputados, Pleno o comisiones — SÍ distingue cámara "
+                "Agenda oficial de sesiones: Senado, Diputados, Pleno y comisiones. Sin `camara` trae todas "
+                "(la agenda parlamentaria general). SÍ distingue cámara "
                 "(camara='senado'/'diputados'/'pleno'/'comision'). Usar siempre que el usuario "
                 "nombre una cámara puntual, en vez de fetch_agenda_comisiones."
             ),
@@ -379,7 +368,7 @@ TOOLS = [
                 "properties": {
                     "dias": {
                         "type": "integer",
-                        "description": "Días hacia adelante a consultar (default: 2)."
+                        "description": "Días hacia adelante a consultar, contando hoy (default: 2 = hoy y mañana). Para la agenda general o una fecha puntual, 14."
                     },
                     "camara": {
                         "type": "string",
@@ -464,7 +453,6 @@ def _solo(args: dict, funcion) -> dict:
 TOOL_MAP = {
     "buscar_proyectos":        lambda args: fetch_proyectos(**_solo(args, fetch_proyectos)),
     "buscar_sesiones":         lambda args: fetch_sesiones(**_solo(args, fetch_sesiones)),
-    "buscar_agenda":           lambda args: fetch_agenda(),
     "buscar_destacados":       lambda args: fetch_destacados(),
     "buscar_congresista":      lambda args: fetch_congresista(**_solo(args, fetch_congresista)),
     "rastrear_proyecto":       lambda args: fetch_estado_proyecto(**_solo(args, fetch_estado_proyecto)),
@@ -487,7 +475,6 @@ TOOL_MAP = {
 STATUS_LABELS = {
     "buscar_proyectos":        "Buscando proyectos de ley en SPLEY...",
     "buscar_sesiones":         "Consultando sesiones del Congreso...",
-    "buscar_agenda":           "Obteniendo agenda parlamentaria...",
     "buscar_destacados":       "Buscando destacados, citaciones y documentos...",
     "buscar_congresista":      "Consultando perfil del congresista...",
     "rastrear_proyecto":       "Rastreando estado del proyecto...",

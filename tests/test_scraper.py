@@ -336,3 +336,48 @@ async def test_normas_busca_por_tema_y_por_numero(monkeypatch):
     r = await normas.buscar("¿qué dice el artículo 131 de la Constitución?")
     assert [a["articulo"] for a in r["articulos"]] == ["131"]
     assert r["articulos"][0]["norma"] == "Constitución Política del Perú"
+
+
+class _RespuestaFalsa:
+    def __init__(self, text):
+        self.status_code = 200
+        self.text = text
+
+
+class _ClienteFalso:
+    def __init__(self, html):
+        self.html = html
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+    async def get(self, url, headers=None):
+        return _RespuestaFalsa(self.html)
+
+
+_WIDGETS_VACIOS = (
+    '<div class="widget widget_wc_widget_feature_article"><ul></ul></div>'
+    '<div class="widget widget_wc_widget_citation_article"><ul></ul></div>'
+)
+
+
+@pytest.mark.parametrize("html,falla", [
+    # Así llega hoy la portada de Diputados: widgets presentes, <ul> vacío,
+    # sin el literal "No hay publicaciones". Es vacío, no un fallo.
+    (_WIDGETS_VACIOS, False),
+    ("<p>No hay publicaciones para mostrar</p>", False),
+    # Sin widgets: el HTML cambió de verdad.
+    ("<html><body>otra cosa</body></html>", True),
+])
+async def test_destacados_vacio_vs_html_cambiado(monkeypatch, html, falla):
+    import scraper
+    monkeypatch.setattr(scraper, "_client", lambda *a, **k: _ClienteFalso(html))
+    if falla:
+        with pytest.raises(Exception, match="HTML cambió"):
+            await scraper._scrape_destacados_camara("https://diputados.congreso.gob.pe/")
+    else:
+        r = await scraper._scrape_destacados_camara("https://diputados.congreso.gob.pe/")
+        assert r["destacados"] == [] and r["citaciones"] == []

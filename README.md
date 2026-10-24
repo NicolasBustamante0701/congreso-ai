@@ -53,10 +53,10 @@ En desarrollo, las credenciales van en un `.env` en la raíz (no se commitea; la
 
 ```
 GROQ_API_KEY=...        # transcripción Whisper — siempre Groq, ver config.py
-LLM_PROVIDER=gemini     # groq | gemini | cerebras | openai
+LLM_PROVIDER=gemini     # gemini | mistral | groq | openai
 ```
 
-Cada proveedor lee su propia key (`GEMINI_API_KEY`, `CEREBRAS_API_KEY`,
+Cada proveedor lee su propia key (`GEMINI_API_KEY`, `GROQ_API_KEY`,
 `OPENAI_API_KEY`, `MISTRAL_API_KEY`).
 
 **Respaldo gratis recomendado: Mistral.** El tier gratis de Gemini se satura

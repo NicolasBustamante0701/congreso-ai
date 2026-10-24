@@ -1136,3 +1136,57 @@ def test_link_con_llaves_se_arregla():
     from services.orchestrator import _LINK_CON_LLAVES_RE
     t = "| [Ver documento]({https://comunicaciones.congreso.gob.pe/a.pdf}) |"
     assert _LINK_CON_LLAVES_RE.sub(r"](\1)", t) == "| [Ver documento](https://comunicaciones.congreso.gob.pe/a.pdf) |"
+
+
+@pytest.mark.parametrize("camara,pedido,queda", [
+    # Visto con Mistral: cámara que nadie pidió → 0 resultados.
+    ("congreso", "Resume los proyectos de ley presentados esta semana sobre salud.", False),
+    ("congreso", "¿Qué proyectos presentó el Congreso esta semana?", False),
+    ("congreso", "Proyectos del periodo 2021-2026 sobre agua", True),
+    ("diputados", "Proyectos de Diputados sobre salud", True),
+    ("senado", "Proyectos sobre salud de esta semana", False),
+    ("senado", "¿Qué presentó el Senado?", True),
+])
+def test_filtro_camara_solo_si_el_usuario_la_nombro(camara, pedido, queda):
+    from services.orchestrator import _camara_solo_si_se_nombro
+    args = _camara_solo_si_se_nombro({"materia": "salud", "camara": camara}, pedido)
+    assert ("camara" in args) is queda
+    assert args["materia"] == "salud"
+
+
+def test_agenda_se_extiende_hasta_la_fecha_pedida():
+    from datetime import date
+
+    from services.orchestrator import _dias_hasta_fecha_pedida
+    hoy = date(2026, 10, 24)
+    # Visto el 24/10: sesión del 26/10 pedida con el default de 2 días (hoy y mañana).
+    assert _dias_hasta_fecha_pedida("¿Qué se trata el 26/10/2026 a las 9:00 AM?", hoy) == 3
+    assert _dias_hasta_fecha_pedida("sesión del 26/10", hoy) == 3
+    assert _dias_hasta_fecha_pedida("hoy 24/10/2026", hoy) == 1
+    assert _dias_hasta_fecha_pedida("la del 05/01", date(2026, 12, 20)) == 17
+    # Fechas pasadas, lejanas o que no son fechas: no se toca.
+    assert _dias_hasta_fecha_pedida("D.S. N° 085-2003-PCM, el 20/10/2026", hoy) is None
+    assert _dias_hasta_fecha_pedida("el 26/12/2026", hoy) is None
+    assert _dias_hasta_fecha_pedida("31/02", hoy) is None
+    assert _dias_hasta_fecha_pedida("sin fecha", hoy) is None
+
+
+def test_no_queda_la_agenda_de_noticias():
+    # buscar_agenda devolvía noticias de prensa como si fueran la agenda.
+    from services.tools import TOOL_MAP, TOOLS
+    nombres = {t["function"]["name"] for t in TOOLS}
+    assert "buscar_agenda" not in nombres and "buscar_agenda" not in TOOL_MAP
+    assert "fetch_agenda_camaras" in nombres
+
+
+@pytest.mark.parametrize("texto,pide", [
+    ("¿Qué se va a tratar en la sesión de la Comisión de Medio Ambiente el 26/10/2026? Busca la agenda", True),
+    ("¿Cuál es la agenda de esta semana?", True),
+    ("¿Hay sesión del Pleno mañana?", True),
+    ("¿Qué se dijo sobre presupuesto en la sesión transcrita?", False),
+    ("hola", False),
+    ("¿Qué es una cuestión de confianza?", False),
+])
+def test_pide_agenda(texto, pide):
+    from services.orchestrator import _pide_agenda
+    assert _pide_agenda(texto) is pide

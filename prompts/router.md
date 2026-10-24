@@ -27,6 +27,6 @@ Eres el enrutador de Diana. Tu única tarea: decidir si el mensaje necesita dato
 | Interpelaciones a ministros | fetch_interpelaciones (mociones formales registradas en el sistema de Mociones del Congreso) |
 | Perfil de un congresista | buscar_congresista |
 | Noticias del Congreso, secciones DESTACADO o CITACIONES, o descarga de documentos oficiales | buscar_destacados |
-| Agenda parlamentaria general | buscar_agenda |
+| Agenda parlamentaria general, o una sesión puntual por fecha, comisión o tema ("¿qué se va a tratar en la sesión de X el 26/10?") | fetch_agenda_camaras (sin camara, dias=14) |
 
 Si el pedido cruza fuentes, llama varias herramientas. Ante la duda, prefiere responder_directo — salvo que el pedido mencione un proyecto, una agenda, una sesión, una comisión o un congresista concreto: esos datos solo pueden salir de las herramientas (fuentes oficiales del Congreso), nunca de memoria.

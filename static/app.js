@@ -145,7 +145,7 @@
   // ════════════════════════════════════════════════════════════════════════
   // Estado del asistente (pie de la navegación)
   // ════════════════════════════════════════════════════════════════════════
-  const NOMBRE_PROV = { gemini: 'Gemini', groq: 'Groq', openai: 'OpenAI', cerebras: 'Cerebras', mistral: 'Mistral' };
+  const NOMBRE_PROV = { gemini: 'Gemini', groq: 'Groq', openai: 'OpenAI', mistral: 'Mistral' };
   let estadoIA = null;
 
   async function refrescarEstado({ probar = false } = {}) {
@@ -1113,7 +1113,7 @@
   const aiStatus = $('ai-status'), aiMsg = $('ai-msg'), aiSave = $('ai-save'), aiClear = $('ai-clear');
   const AI_KEY_URLS = {
     gemini: 'https://aistudio.google.com/app/apikey', groq: 'https://console.groq.com/keys',
-    openai: 'https://platform.openai.com/api-keys', cerebras: 'https://cloud.cerebras.ai',
+    openai: 'https://platform.openai.com/api-keys',
     mistral: 'https://console.mistral.ai/api-keys',
   };
   // El link muestra la dirección: quien recibe la app sabe a dónde va antes de tocarlo.
