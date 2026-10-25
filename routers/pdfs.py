@@ -47,13 +47,22 @@ async def congreso_pdfs():
             data = await fetch_destacados()
             if not data.get("sin_datos"):
                 tool_cache.put("buscar_destacados", {}, data)
+        # Congreso y Senado publican el mismo PDF en sus dos portadas: va una
+        # sola vez, con las cámaras que lo publicaron.
+        por_enlace = {}
         for camara, info in data.get("camaras", {}).items():
             for clave, tipo in (("destacados", "Destacado"), ("citaciones", "Citación")):
                 for item in info.get(clave, []):
                     url = item.get("enlace", "")
-                    if url.lower().endswith(".pdf"):
-                        pdfs.append({"titulo": item["titulo"], "enlace": url,
-                                     "tipo": f"{tipo} — {camara}"})
+                    if not url.lower().endswith(".pdf"):
+                        continue
+                    if url in por_enlace:
+                        if camara not in por_enlace[url]["camaras"]:
+                            por_enlace[url]["camaras"].append(camara)
+                        continue
+                    por_enlace[url] = {"titulo": item["titulo"], "enlace": url,
+                                       "tipo": tipo, "camaras": [camara]}
+                    pdfs.append(por_enlace[url])
 
         # Cuando ninguna cámara publica destacados ni citaciones, el scraper
         # devuelve los documentos que sí están disponibles (agendas del Pleno).
@@ -92,9 +101,14 @@ async def congreso_proyectos():
         if not enlace:
             continue
         numero = item.get("numero", "")
-        titulo = item.get("sumilla", numero)
+        # SPLEY trae el título en `titulo` (antes `sumilla`): sin esto la
+        # lista mostraba solo el número, dos veces.
+        titulo = item.get("titulo") or item.get("sumilla") or numero
         proyectos.append({
-            "titulo": f"[{numero}] {titulo[:100]}" if numero else titulo[:110],
+            "titulo": titulo,
+            "numero": numero,
+            "fecha": item.get("fecha_presentacion", ""),
+            "camaras": [item["camara"]] if item.get("camara") else [],
             "enlace": enlace,
             "tipo": "Proyecto de Ley",
         })

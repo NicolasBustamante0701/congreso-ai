@@ -9,6 +9,7 @@ from fastapi.responses import HTMLResponse
 from config import LLM_API_KEY, ahora_lima, static_file
 from scraper import fetch_agenda_camaras, fetch_destacados, fetch_proyectos
 from services import sse
+from services.agenda_formato import partes as partes_agenda
 
 router = APIRouter()
 
@@ -177,6 +178,12 @@ async def _cacheado(clave: str, producir):
     return valor
 
 
+def _con_partes(sesiones: list[dict]) -> list[dict]:
+    """Agrega `partes`: la sesión separada en comisión, invitado y tema para la
+    pantalla (services/agenda_formato). El texto original queda igual."""
+    return [{**s, "partes": partes_agenda(s.get("tema", ""), s.get("organiza", ""))} for s in sesiones]
+
+
 @router.get("/inicio")
 async def inicio():
     async def producir():
@@ -186,7 +193,7 @@ async def inicio():
         fallas = []
         sesiones = []
         if isinstance(agenda, dict) and not agenda.get("error"):
-            sesiones = _sesiones_ordenadas(agenda, solo_futuras=True)[:6]
+            sesiones = _con_partes(_sesiones_ordenadas(agenda, solo_futuras=True)[:6])
         else:
             fallas.append("Agenda de comunicaciones.congreso.gob.pe")
         recientes = None
@@ -218,5 +225,5 @@ async def agenda(dias: int = Query(14, ge=1, le=31)):
             return {"error": (r or {}).get("error", "No se pudo consultar la agenda.")}
         return {"fuente": r.get("fuente", "comunicaciones.congreso.gob.pe/agenda"),
                 "actualizado": ahora_lima().strftime("%d/%m/%Y %H:%M"),
-                "sesiones": _sesiones_ordenadas(r, solo_futuras=False)}
+                "sesiones": _con_partes(_sesiones_ordenadas(r, solo_futuras=False))}
     return await _cacheado(f"agenda:{dias}", producir)

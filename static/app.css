@@ -219,10 +219,24 @@ html, body { height: 100%; overflow: hidden; }
 .agenda-evento:last-child { border-bottom: none; }
 .agenda-hora { font: 650 13px var(--d-font); font-variant-numeric: tabular-nums; }
 .agenda-hora small { display: block; font-weight: 500; font-size: 11px; color: var(--d-text-3); }
-.agenda-evento.is-pasada .agenda-tema, .agenda-evento.is-pasada .agenda-hora { color: var(--d-text-3); }
-.agenda-tema { font-size: 13.5px; font-weight: 550; line-height: 1.45; }
-.agenda-meta { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 5px; font-size: 12px; color: var(--d-text-3); }
-.agenda-acciones { display: flex; gap: 6px; margin-top: 8px; }
+.agenda-evento.is-pasada .agenda-titulo, .agenda-evento.is-pasada .agenda-hora { color: var(--d-text-3); }
+.agenda-cuerpo { min-width: 0; }
+.agenda-cab { display: flex; align-items: baseline; gap: 8px; }
+.agenda-cam { flex-shrink: 0; padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 650;
+  background: var(--cam-soft); color: var(--cam); }
+.agenda-titulo { margin: 0; font: 650 14px/1.35 var(--d-font-display); }
+.agenda-sub { margin-top: 2px; font-size: 12px; color: var(--d-text-3); }
+.agenda-actividad { margin-top: 4px; font-size: 13px; font-weight: 550; line-height: 1.45; }
+.agenda-linea { display: grid; grid-template-columns: 64px 1fr; gap: 8px; margin-top: 5px; font-size: 13px; line-height: 1.45; color: var(--d-text-2); }
+.agenda-etq { font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: .04em; color: var(--d-text-3); padding-top: 2px; }
+/* El tema puede ser un párrafo entero: 3 líneas y se abre con un clic. */
+.agenda-tema-txt span:last-child { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; cursor: pointer; }
+.agenda-tema-txt.is-abierto span:last-child { -webkit-line-clamp: unset; display: block; }
+.agenda-mas { margin: 4px 0 0 72px; font-size: 12px; color: var(--d-text-3); font-style: italic; }
+.agenda-meta { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 8px; font-size: 12px; color: var(--d-text-3); }
+.agenda-meta span + span::before { content: "·"; margin-right: 14px; margin-left: -7px; }
+.agenda-acciones { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.agenda-acciones a.d-btn { text-decoration: none; }
 
 .seg { display: inline-flex; padding: 2px; border-radius: var(--d-r-sm); background: var(--d-hover); gap: 2px; flex-wrap: wrap; }
 .seg-btn { height: 28px; padding: 0 11px; border: none; border-radius: 5px; background: transparent; color: var(--d-text-2);

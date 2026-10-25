@@ -807,10 +807,12 @@
   }
 
   function filaSesion(s) {
-    const meta = [s.camara, s.lugar].filter(Boolean).map(esc).join(' · ');
-    return `<button class="lista-item" data-preguntar="${esc(`¿Qué se va a tratar en "${s.tema}" (${s.fecha} ${s.hora})?`)}">
+    const p = partesDe(s);
+    const detalle = p.invitado ? `Invitado: ${p.invitado}` : (p.tema || p.actividad);
+    const meta = [camaraCorta(s.camara), detalle].filter(Boolean).map(esc).join(' · ');
+    return `<button class="lista-item" data-preguntar="${esc(preguntaSesion(s, p))}">
       <span class="lista-cuando">${esc(s.dia)}<small>${esc(s.hora)}</small></span>
-      <span class="lista-texto"><span class="t">${esc(s.tema)}</span>${meta ? `<span class="m">${meta}</span>` : ''}</span><span></span></button>`;
+      <span class="lista-texto"><span class="t">${esc(p.titulo)}</span>${meta ? `<span class="m">${meta}</span>` : ''}</span><span></span></button>`;
   }
   function filaProyecto(p) {
     return `<button class="lista-item" data-expediente="${esc(p.numero)}">
@@ -893,7 +895,9 @@
     const p = e.target.closest('[data-preguntar]');
     if (p && !streaming) { newChat(); send(p.dataset.preguntar); return; }
     const x = e.target.closest('[data-expediente]');
-    if (x) abrirExpediente(x.dataset.expediente);
+    if (x) { abrirExpediente(x.dataset.expediente); return; }
+    const t = e.target.closest('.agenda-tema-txt');
+    if (t) t.classList.toggle('is-abierto');
   });
 
   // ── Resumen semanal ──────────────────────────────────
@@ -938,7 +942,7 @@
     const filtro = $('agenda-filtro').value.trim().toLowerCase();
     const sesiones = agendaDatos.sesiones.filter((s) =>
       (!agendaCamara || (s.camara || '').toLowerCase().includes(agendaCamara.toLowerCase())) &&
-      (!filtro || [s.tema, s.lugar, s.organiza].join(' ').toLowerCase().includes(filtro)));
+      (!filtro || [s.tema, s.lugar, s.organiza, s.camara].join(' ').toLowerCase().includes(filtro)));
     $('agenda-fuente').textContent = `Fuente: ${agendaDatos.fuente} · consultado ${agendaDatos.actualizado} · ${sesiones.length} de ${agendaDatos.sesiones.length} actividades · horas de Lima (GMT-5). Solo se muestran las que tienen fecha y hora publicadas.`;
     if (!sesiones.length && agendaVista !== 'calendario') {
       lista.innerHTML = `<div class="d-card">${vacio(agendaDatos.sesiones.length ? 'Nada coincide con el filtro' : 'Sin actividades publicadas',
@@ -955,25 +959,59 @@
     lista.innerHTML = htmlDias(porDia);
   }
 
+  // "Cámara de Diputados" → "Diputados": el badge es corto y lleva el color.
+  function camaraCorta(c) { return (c || '').replace(/^C[aá]mara de\s+/i, ''); }
+
+  // Partes de la sesión (routers/pages.py → services/agenda_formato). Si el
+  // servidor es viejo y no las manda, se muestra el texto original.
+  function partesDe(s) {
+    return s.partes || { titulo: s.tema, actividad: '', invitado: '', tema: '', comision: '', responsable: s.organiza, mas_temas: false };
+  }
+
+  function preguntaSesion(s, p) {
+    const quien = p.invitado ? `, con ${p.invitado.split(' — ')[0]}` : '';
+    return `¿Qué se va a tratar en la sesión de ${p.titulo}${quien}, el ${s.fecha} a las ${s.hora}? Busca la agenda y los proyectos relacionados.`;
+  }
+
+  function htmlEvento(s, pasada) {
+    const p = partesDe(s);
+    const linea = (etq, txt, cls = '') => txt
+      ? `<div class="agenda-linea ${cls}"><span class="agenda-etq">${etq}</span><span>${esc(txt)}</span></div>` : '';
+    const lugar = s.lugar ? `<span title="Lugar">${esc(s.lugar)}</span>` : '';
+    const resp = p.responsable ? `<span>${esc(p.responsable)}</span>` : '';
+    const pdf = s.documento
+      ? `<a class="d-btn d-btn--sm" href="${esc(s.documento)}" target="_blank" rel="noopener" title="Documento oficial de esta sesión (agenda o citación)">Ver documento (PDF)</a>` : '';
+    return `
+      <div class="agenda-evento${pasada ? ' is-pasada' : ''}">
+        <div class="agenda-hora">${esc(s.hora)}${pasada ? '<small>hora pasada</small>' : ''}</div>
+        <div class="agenda-cuerpo">
+          <div class="agenda-cab">
+            ${s.camara ? `<span class="agenda-cam ${claseCamara(s.camara)}">${esc(camaraCorta(s.camara))}</span>` : ''}
+            <h4 class="agenda-titulo">${esc(p.titulo)}</h4>
+          </div>
+          ${p.comision ? `<div class="agenda-sub">${esc(p.comision)}</div>` : ''}
+          ${p.actividad ? `<div class="agenda-actividad">${esc(p.actividad)}</div>` : ''}
+          ${linea('Invitado', p.invitado)}
+          ${linea('Tema', p.tema, 'agenda-tema-txt')}
+          ${p.mas_temas ? '<div class="agenda-mas">Hay más temas o invitados en la agenda oficial.</div>' : ''}
+          ${lugar || resp ? `<div class="agenda-meta">${lugar}${resp}</div>` : ''}
+          <div class="agenda-acciones">${pdf}
+            <button class="d-btn d-btn--sm" data-preguntar="${esc(preguntaSesion(s, p))}">Preguntar a Diana</button></div>
+        </div>
+      </div>`;
+  }
+
   function htmlDias(porDia) {
     return [...porDia.entries()].map(([fecha, ss]) => {
       const dt = new Date(ss[0].iso);
       const largo = dt.toLocaleDateString('es-PE', { weekday: 'long', day: 'numeric', month: 'long' });
-      return `<div class="agenda-dia"><h3 class="agenda-dia-t">${esc(ss[0].dia)} <small>${esc(largo)}</small></h3>
+      const cuenta = ss.length === 1 ? '1 actividad' : `${ss.length} actividades`;
+      return `<div class="agenda-dia"><h3 class="agenda-dia-t">${esc(ss[0].dia)} <small>${esc(largo)} · ${cuenta}</small></h3>
         <div class="d-card">${ss.map((s) => {
           // Hora ya pasada: se muestra atenuada, sin afirmar que se realizó
           // (la fuente no lo dice).
           const pasada = new Date(s.iso) < new Date();
-          return `
-          <div class="agenda-evento${pasada ? ' is-pasada' : ''}">
-            <div class="agenda-hora">${esc(s.hora)}${pasada ? '<small>hora pasada</small>' : ''}</div>
-            <div>
-              <div class="agenda-tema">${esc(s.tema)}</div>
-              <div class="agenda-meta">${s.camara ? `<span class="d-badge">${esc(s.camara)}</span>` : ''}
-                ${s.lugar ? `<span>${esc(s.lugar)}</span>` : ''}${s.organiza ? `<span>${esc(s.organiza)}</span>` : ''}</div>
-              <div class="agenda-acciones"><button class="d-btn d-btn--sm" data-preguntar="${esc(`¿Qué se va a tratar en "${s.tema}" el ${s.fecha} a las ${s.hora}? Busca la agenda y los proyectos relacionados.`)}">Preguntar a Diana</button></div>
-            </div>
-          </div>`; }).join('')}</div></div>`;
+          return htmlEvento(s, pasada); }).join('')}</div></div>`;
     }).join('');
   }
 
@@ -1015,7 +1053,7 @@
       const num = d.getDate() === 1 || +d === +inicio
         ? d.toLocaleDateString('es-PE', { day: 'numeric', month: 'short' }) : d.getDate();
       const chips = evs.slice(0, 3).map((s) =>
-        `<span class="cal-ev ${claseCamara(s.camara)}" title="${esc(`${s.hora} · ${s.tema}`)}"><b>${esc(s.hora)}</b> ${esc(s.tema)}</span>`).join('');
+        `<span class="cal-ev ${claseCamara(s.camara)}" title="${esc(`${s.hora} · ${partesDe(s).titulo}`)}"><b>${esc(s.hora)}</b> ${esc(partesDe(s).titulo)}</span>`).join('');
       const mas = evs.length > 3 ? `<span class="cal-mas">+${evs.length - 3} más</span>` : '';
       celdas.push(`<button class="${clases}" data-dia="${k}" ${fuera && !evs.length ? 'tabindex="-1"' : ''}
         aria-label="${esc(d.toLocaleDateString('es-PE', { weekday: 'long', day: 'numeric', month: 'long' }))}: ${evs.length} actividades">

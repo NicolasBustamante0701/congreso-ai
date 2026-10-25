@@ -33,7 +33,8 @@ body { margin: 0; }
 .p-item-text { min-width: 0; }
 .p-item-nombre { font-size: 13px; line-height: 1.4; color: var(--d-text);
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.p-item-tipo { margin-top: 2px; font-size: 11.5px; color: var(--d-text-3); }
+.p-item-tipo { margin-top: 2px; font-size: 11.5px; color: var(--d-text-3); font-variant-numeric: tabular-nums; }
+.p-section-n { margin-left: 4px; font-weight: 500; color: var(--d-text-3); }
 /* Tipos: solo el ícono lleva un tinte semántico suave */
 .p-item.proyecto .p-item-icon, .p-item.referencia .p-item-icon { background: var(--d-accent-soft); color: var(--d-accent); }
 .p-item.agenda .p-item-icon, .p-item.sesion .p-item-icon { background: var(--d-info-soft); color: var(--d-info); }

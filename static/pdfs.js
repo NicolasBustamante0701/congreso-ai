@@ -19,7 +19,32 @@ function normalizePdf(p) {
   else if (t.includes('ses') || t.includes('plen')) tipo = 'sesion';
   else if (t.includes('agenda')) tipo = 'agenda';
   else if (t.includes('doc')) tipo = 'documento';
-  return { titulo: p.titulo, url: p.enlace || p.url || '', tipo };
+  // Servidor viejo: la cámara venía pegada al tipo ("Destacado — Senado").
+  const camaras = p.camaras || (p.tipo || '').split(' — ').slice(1);
+  return { titulo: p.titulo || '', url: p.enlace || p.url || '', tipo, camaras,
+           numero: p.numero || '', fecha: p.fecha || '' };
+}
+
+// "PROPOSICIÓN LEGISLATIVA QUE DESINCENTIVA LA DEFORESTACION" → "Desincentiva la deforestacion".
+// Solo toca títulos en mayúsculas: los demás vienen bien escritos.
+function tituloLegible(p) {
+  let t = (p.titulo || '').trim();
+  const letras = t.replace(/[^A-Za-zÁÉÍÓÚÑáéíóúñ]/g, '');
+  if (letras && letras === letras.toUpperCase()) {
+    t = t.toLowerCase();
+    if (p.tipo === 'proyecto') t = t.replace(/^(proposici[oó]n legislativa|proyecto de ley)\s+(que\s+)?/, '');
+    t = t.charAt(0).toUpperCase() + t.slice(1);
+    // Nombres propios que el paso a minúsculas deja mal.
+    t = t.replace(/(?<!\p{L})(perú|lima|callao|república|congreso|constitución política|jorge chávez|sunat|indecopi|essalud|minsa|mef)(?!\p{L})/gu,
+      (w) => (/^(sunat|indecopi|essalud|minsa|mef)$/.test(w) ? w.toUpperCase()
+        : w.replace(/(^|\s)\S/g, (c) => c.toUpperCase())));
+  }
+  return t;
+}
+
+function metaDe(p) {
+  if (p.tipo === 'proyecto') return [p.numero, p.fecha].filter(Boolean).join(' · ');
+  return p.camaras.length ? `Publicado por ${p.camaras.join(' y ')}` : (TIPO_LABELS[p.tipo] || '');
 }
 
 async function loadPdfs() {
@@ -78,7 +103,7 @@ function renderList() {
   for (const g of GROUPS) {
     const items = pdfs.filter(p => p.tipo === g.tipo);
     if (!items.length) continue;
-    html += `<div class="p-section-label">${g.label}</div>`;
+    html += `<div class="p-section-label">${g.label} <span class="p-section-n">${items.length}</span></div>`;
     for (const p of items) {
       const actualIdx = pdfs.indexOf(p);
       html += itemHtml(p, actualIdx);
@@ -107,8 +132,8 @@ function itemHtml(p, idx) {
       </svg>
     </div>
     <div class="p-item-text">
-      <div class="p-item-nombre">${escHtml(p.titulo)}</div>
-      <div class="p-item-tipo">${TIPO_LABELS[p.tipo] || p.tipo}</div>
+      <div class="p-item-nombre" title="${escHtml(p.titulo)}">${escHtml(tituloLegible(p))}</div>
+      <div class="p-item-tipo">${escHtml(metaDe(p))}</div>
     </div>
   </div>`;
 }
@@ -133,10 +158,15 @@ function selectPdf(idx) {
   panel.style.display = 'flex';
 
   badge.className = 'p-badge ' + selected.tipo;
-  badge.textContent = TIPO_LABELS[selected.tipo] || selected.tipo;
-  title.textContent = selected.titulo;
+  badge.textContent = [TIPO_LABELS[selected.tipo] || selected.tipo, metaDe(selected)]
+    .filter((x, i, a) => x && a.indexOf(x) === i).join(' · ');
+  title.textContent = tituloLegible(selected);
 
   const isProyecto = selected.tipo === 'proyecto';
+  if (isProyecto && selected.camaras.length) badge.textContent += ` · ${selected.camaras.join(' y ')}`;
+  document.getElementById('p-hint').textContent = isProyecto
+    ? 'Diana consulta el expediente en SPLEY: estado, autores y de qué trata.'
+    : 'Diana lee el PDF (solo de congreso.gob.pe) y responde citando la página de cada dato.';
 
   // Vista previa
   loadPreview(selected.url, isProyecto);
@@ -160,9 +190,8 @@ function selectPdf(idx) {
 
   loadBtn.onclick = () => {
     if (isProyecto) {
-      // Extract project number from title for a chat query
-      const match = selected.titulo.match(/\[([^\]]+)\]/);
-      const num = match ? match[1] : selected.titulo.slice(0, 40);
+      const match = selected.titulo.match(/\[([^\]]+)\]/);   // formato viejo: "[número] título"
+      const num = selected.numero || (match ? match[1] : selected.titulo.slice(0, 40));
       window.parent.postMessage({ type: 'query-proyecto', numero: num, titulo: selected.titulo }, location.origin);
     } else {
       cargarAlChat(selected);
@@ -232,7 +261,7 @@ function cargarAlChat(pdf) {
 }
 
 function escHtml(str) {
-  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
 document.getElementById('refresh-btn').addEventListener('click', loadPdfs);

@@ -97,6 +97,36 @@ async def test_congreso_pdfs_segunda_apertura_sale_de_cache(client):
     assert r1.json()["pdfs"] == r2.json()["pdfs"]
 
 
+@pytest.mark.asyncio
+async def test_congreso_pdfs_mismo_pdf_en_dos_camaras_va_una_vez(client):
+    # Congreso y Senado publican la misma resolución: salía dos veces.
+    doc = {"titulo": "Resolución Legislativa del Senado 002", "enlace": "https://www3.congreso.gob.pe/r.pdf"}
+    fake = AsyncMock(return_value={"camaras": {
+        "Congreso": {"destacados": [doc], "citaciones": []},
+        "Senado": {"destacados": [doc], "citaciones": []},
+    }})
+    with patch("routers.pdfs.fetch_destacados", new=fake):
+        pdfs = (await client.get("/congreso-pdfs")).json()["pdfs"]
+    iguales = [p for p in pdfs if p["enlace"] == doc["enlace"]]
+    assert len(iguales) == 1
+    assert iguales[0]["camaras"] == ["Congreso", "Senado"]
+    assert iguales[0]["tipo"] == "Destacado"
+
+
+@pytest.mark.asyncio
+async def test_congreso_proyectos_usa_el_titulo(client):
+    # SPLEY trae `titulo`: la lista mostraba "[00666-...] 00666-..." sin título.
+    fake = AsyncMock(return_value={"items": [{
+        "numero": "00666-2026-2031-CD", "titulo": "PROPOSICIÓN LEGISLATIVA QUE DESINCENTIVA LA DEFORESTACION",
+        "fecha_presentacion": "23/10/2026", "camara": "Diputados",
+        "enlace": "https://wb2server.congreso.gob.pe/spley-portal/#/diputados/expediente/2026/666"}]})
+    with patch("routers.pdfs.fetch_proyectos", new=fake):
+        p = (await client.get("/congreso-proyectos")).json()["pdfs"][0]
+    assert p["titulo"] == "PROPOSICIÓN LEGISLATIVA QUE DESINCENTIVA LA DEFORESTACION"
+    assert p["numero"] == "00666-2026-2031-CD" and p["fecha"] == "23/10/2026"
+    assert p["camaras"] == ["Diputados"]
+
+
 # ── /dashboard-metrics ────────────────────────────────────────────────────────
 @pytest.mark.asyncio
 async def test_dashboard_usa_el_total_real_no_el_truncado(client):
