@@ -9,7 +9,9 @@ yt-dlp
 youtube-transcript-api
 pycryptodome>=3.20.0
 python-multipart>=0.0.9
-PyMuPDF>=1.24.0
+# 2.0 trae pymupdf-layout con datos que el .app no llevaba: "No se pudo leer el PDF:
+# [Errno 2] ... pymupdf/layout/resources" (24/10/2026). Subir solo probando el .app.
+PyMuPDF>=1.24.0,<2
 python-docx>=1.1.0
 # ffmpeg para la transcripción (vivo y Whisper). Trae el binario en el wheel,
 # así que no hace falta brew/apt ni sudo — en una Mac sin Homebrew es la única

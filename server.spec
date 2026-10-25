@@ -14,6 +14,18 @@ try:
 except Exception:
     _ff_datas = []
 
+# PyMuPDF lee archivos de datos propios en runtime (en 2.x, los modelos de
+# pymupdf/layout). PyInstaller no los ve por análisis estático: sin esto cada
+# PDF fallaba en la app con "[Errno 2] No such file ... pymupdf/layout/...".
+from PyInstaller.utils.hooks import collect_data_files
+
+_pymupdf_datas = []
+for _pkg in ("pymupdf", "pymupdf_layout"):
+    try:
+        _pymupdf_datas += collect_data_files(_pkg)
+    except Exception:
+        pass
+
 a = Analysis(
     ['server.py'],
     pathex=['.'],
@@ -25,7 +37,7 @@ a = Analysis(
         ('prompts', 'prompts'),
         ('scraper.py', '.'),
         ('live_transcriber.py', '.'),
-    ] + _ff_datas,
+    ] + _ff_datas + _pymupdf_datas,
     hiddenimports=[
         'config',
         'routers',

@@ -113,8 +113,15 @@ jobs:
           (cd "$APP/Contents/Resources/server" && PORT=8791 ./server > "$RUNNER_TEMP/server-solo.log" 2>&1 &)
           ok=""
           for i in $(seq 1 60); do curl -sf http://127.0.0.1:8791/status && { ok=1; break; }; sleep 2; done
+          [ -n "$ok" ] || { pkill -f "Resources/server/server" || true; echo "::error::el servidor solo no respondió"; tail -60 "$RUNNER_TEMP/server-solo.log"; exit 1; }
+          # Leer un PDF con el servidor empaquetado: la v1.0.24 salió con
+          # PyMuPDF 2.0 sin sus archivos de datos y ningún PDF se podía leer.
+          python -c "import pymupdf; d=pymupdf.open(); p=d.new_page(); p.insert_text((72,72),'Prueba de lectura Diana'); d.save('$RUNNER_TEMP/prueba.pdf')"
+          pdf=$(curl -s -F "file=@$RUNNER_TEMP/prueba.pdf" http://127.0.0.1:8791/upload-pdf)
           pkill -f "Resources/server/server" || true
-          [ -n "$ok" ] || { echo "::error::el servidor solo no respondió"; tail -60 "$RUNNER_TEMP/server-solo.log"; exit 1; }
+          echo "$pdf" | head -c 300; echo
+          echo "$pdf" | grep -q '"ok":true' && echo "$pdf" | grep -q 'Prueba de lectura' \
+            || { echo "::error::el servidor empaquetado no pudo leer un PDF"; tail -40 "$RUNNER_TEMP/server-solo.log"; exit 1; }
           # 2) La app completa, que levanta su propio servidor.
           DIANA_PORT=8790 DIANA_USER_DATA="$RUNNER_TEMP/ud" "$APP/Contents/MacOS/Diana" > "$RUNNER_TEMP/app.log" 2>&1 &
           ok=""
