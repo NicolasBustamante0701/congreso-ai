@@ -15,7 +15,7 @@
     } catch (e) { /* sin localStorage: sigue al sistema */ }
   </script>
   <link rel="stylesheet" href="/static/tokens.css?v=1">
-  <link rel="stylesheet" href="/static/app.css?v=3">
+  <link rel="stylesheet" href="/static/app.css?v=4">
   <script src="/static/marked.min.js"></script>
   <script src="/static/purify.min.js"></script>
   <script src="/static/md.js"></script>
@@ -316,7 +316,7 @@
                       <option value="gemini">Google Gemini (gratis, recomendado)</option>
                       <option value="groq">Groq (gratis)</option>
                       <option value="openai">OpenAI (pago)</option>
-                      <option value="mistral">Mistral (gratis)</option>
+                      <option value="mistral">Mistral</option>
                     </select>
                   </div>
                   <div>
@@ -328,9 +328,9 @@
                 <label class="d-label" for="ai-groq-key">Key de Groq para transcribir sesiones <span class="opcional">(opcional si el chat ya usa Groq)</span></label>
                 <input class="d-input" id="ai-groq-key" type="password" autocomplete="off" spellcheck="false" placeholder="Solo para la transcripción de sesiones">
                 <button class="link-btn" id="ai-groq-help" type="button">Sacar la key gratis de Groq → console.groq.com/keys</button>
-                <label class="d-label" for="ai-mistral-key">Key de respaldo de Mistral <span class="opcional">(gratis, recomendada)</span></label>
+                <label class="d-label" for="ai-mistral-key">Key de respaldo de Mistral <span class="opcional">(opcional; las cuentas nuevas pueden pedir un plan pagado)</span></label>
                 <input class="d-input" id="ai-mistral-key" type="password" autocomplete="off" spellcheck="false" placeholder="Responde cuando Gemini está saturado">
-                <button class="link-btn" id="ai-mistral-help" type="button">Sacar la key gratis de Mistral → console.mistral.ai/api-keys</button>
+                <button class="link-btn" id="ai-mistral-help" type="button">Sacar la key de Mistral → console.mistral.ai/api-keys</button>
                 <p class="d-hint">Las keys se guardan cifradas con el llavero de macOS, solo en esta computadora. Si el llavero no está disponible, quedan en memoria hasta cerrar la app y no se escriben al disco.</p>
                 <div class="ai-msg" id="ai-msg" role="status"></div>
                 <div class="ajuste-acciones">
@@ -438,6 +438,6 @@
 
 <div class="drop-hint" id="drop-hint" hidden>Suelta el PDF para que Diana lo lea</div>
 
-<script src="/static/app.js?v=33"></script>
+<script src="/static/app.js?v=34"></script>
 </body>
 </html>

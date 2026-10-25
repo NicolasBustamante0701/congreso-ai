@@ -544,6 +544,30 @@
   }
 
   // Avisos breves abajo al centro ("Copiado", "Word exportado").
+  // ── Versión nueva lista (updater.js) ──
+  // Se instala sola al cerrar o al volver a abrir Diana; el botón la instala ya.
+  function avisoActualizacion(version) {
+    if (!version || document.querySelector('.aviso-actualizacion')) return;
+    const el = document.createElement('div');
+    el.className = 'aviso-actualizacion'; el.setAttribute('role', 'status');
+    el.innerHTML = `<div><b>Hay una versión nueva de Diana (${esc(version)})</b>
+      <span>Se instala sola la próxima vez que abras Diana, o ahora en unos segundos.</span></div>
+      <button class="d-btn d-btn--sm d-btn--primary" data-act="ya">Actualizar ahora</button>
+      <button class="d-btn d-btn--sm" data-act="luego">Después</button>`;
+    el.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-act]');
+      if (!b) return;
+      if (b.dataset.act === 'luego') { el.remove(); return; }
+      b.disabled = true; b.textContent = 'Actualizando…';
+      api.actualizarAhora();
+    });
+    document.body.appendChild(el);
+  }
+  if (api?.onActualizacionLista) {
+    api.onActualizacionLista(avisoActualizacion);
+    api.actualizacionEstado().then(avisoActualizacion).catch(() => {});
+  }
+
   function toast(texto) {
     let zona = document.querySelector('.toast-zona');
     if (!zona) { zona = document.createElement('div'); zona.className = 'toast-zona'; zona.setAttribute('aria-live', 'polite'); document.body.appendChild(zona); }

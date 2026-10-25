@@ -467,6 +467,9 @@ function abrirAfuera(raw) {
 }
 
 // ── IPC: abrir enlace externo ────────────────────────────────
+ipcMain.handle('actualizacion-estado', () => updater.versionLista());
+ipcMain.handle('actualizar-ahora', () => updater.actualizarAhora());
+
 ipcMain.handle('open-external', (e, url) => {
   if (typeof url === 'string') abrirAfuera(url);
 });
@@ -576,10 +579,13 @@ ipcMain.handle('load-history', () => {
 
 // ── Ciclo de vida ────────────────────────────────────────────
 app.whenReady().then(() => {
+  // Versión nueva ya descargada en una sesión anterior: se instala antes de
+  // abrir nada y la app vuelve a abrirse sola, ya actualizada.
+  if (updater.instalarPendienteAlArrancar({ logMain })) { app.quit(); return; }
   Menu.setApplicationMenu(null);
   startServer();
   createWindow();
-  updater.iniciar({ logMain, puerto: PORT });
+  updater.iniciar({ logMain, puerto: PORT, ventana: () => win });
   setInterval(healthCheck, HEALTH_INTERVAL_MS);
   globalShortcut.register('CmdOrCtrl+Shift+R', () => {
     win?.webContents.reloadIgnoringCache();

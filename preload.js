@@ -9,4 +9,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   aiSettingsGet:   ()      => ipcRenderer.invoke('ai-settings-get'),
   aiSettingsSave:  (s)     => ipcRenderer.invoke('ai-settings-save', s),
   aiSettingsClear: ()      => ipcRenderer.invoke('ai-settings-clear'),
+  actualizacionEstado: ()   => ipcRenderer.invoke('actualizacion-estado'),
+  actualizarAhora:     ()   => ipcRenderer.invoke('actualizar-ahora'),
+  onActualizacionLista: (cb) => ipcRenderer.on('actualizacion-lista', (_e, version) => cb(version)),
 });
