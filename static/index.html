@@ -357,6 +357,11 @@
                   <button class="seg-btn" data-extension="larga" role="radio">Largas</button>
                 </div>
                 <p class="d-hint">Cortas: lo esencial. Largas: con contexto y explicación. Las tablas y los datos siempre salen completos.</p>
+                <span class="d-label" style="margin-top:16px">Formato de la hora</span>
+                <div class="seg" id="hora-seg" role="radiogroup" aria-label="Formato de la hora">
+                  <button class="seg-btn" data-hora="24" role="radio">24 horas (16:00)</button>
+                  <button class="seg-btn" data-hora="12" role="radio">12 horas (4:00 p. m.)</button>
+                </div>
                 <label class="d-label" for="aj-nombre" style="margin-top:16px">Tu nombre para el saludo <span class="opcional">(opcional)</span></label>
                 <input class="d-input" id="aj-nombre" type="text" maxlength="40" placeholder="Ej. Julio César" style="max-width:320px">
               </div>
@@ -433,6 +438,6 @@
 
 <div class="drop-hint" id="drop-hint" hidden>Suelta el PDF para que Diana lo lea</div>
 
-<script src="/static/app.js?v=32"></script>
+<script src="/static/app.js?v=33"></script>
 </body>
 </html>

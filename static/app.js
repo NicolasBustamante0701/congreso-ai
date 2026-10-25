@@ -81,6 +81,43 @@
     });
   }
   aplicarExtension(extensionGuardada());
+
+  // Formato de la hora: "24" (16:00, por defecto) o "12" (4:00 p. m.). Afecta
+  // el reloj, la agenda y el historial. Las horas de la fuente ("4:00 PM") se
+  // convierten al mostrarlas; la pregunta a Diana las lleva como vienen.
+  const HORA_KEY = 'diana_hora';
+  function hora24() {
+    try { return localStorage.getItem(HORA_KEY) !== '12'; } catch { return true; }
+  }
+  function fmtHora(txt) {
+    const m = String(txt || '').match(/^\s*(\d{1,2}):(\d{2})\s*([ap])\.?\s*m\.?\s*$/i);
+    if (!m) return txt || '';
+    let h = Number(m[1]) % 12;
+    if (m[3].toLowerCase() === 'p') h += 12;
+    if (hora24()) return `${String(h).padStart(2, '0')}:${m[2]}`;
+    return `${h % 12 || 12}:${m[2]} ${h < 12 ? 'a. m.' : 'p. m.'}`;
+  }
+  function marcarHora() {
+    const v = hora24() ? '24' : '12';
+    document.querySelectorAll('#hora-seg .seg-btn').forEach((b) => {
+      const on = b.dataset.hora === v;
+      b.classList.toggle('is-on', on);
+      b.setAttribute('aria-checked', String(on));
+    });
+  }
+  marcarHora();
+  document.querySelectorAll('#hora-seg .seg-btn').forEach((b) => b.addEventListener('click', () => {
+    try { localStorage.setItem(HORA_KEY, b.dataset.hora); } catch { /* sin storage */ }
+    marcarHora();
+    repintarHoras();
+  }));
+  // Vuelve a pintar lo que muestra horas, sin volver a consultar nada.
+  function repintarHoras() {
+    tickReloj();
+    renderConvs();
+    if (agendaDatos) pintarAgenda();
+    if (vistaActual === 'inicio') cargarInicio();
+  }
   document.querySelectorAll('#extension-seg .seg-btn, #extension-chat .seg-btn').forEach((b) =>
     b.addEventListener('click', () => aplicarExtension(b.dataset.extension)));
   mqOscuro.addEventListener('change', () => { if (temaGuardado() === 'sistema') aplicarTema('sistema'); });
@@ -236,7 +273,7 @@
     const DIA = 86400000;
     const edad = Date.now() - ts;
     if (edad < DIA && new Date(ts).getDate() === new Date().getDate())
-      return new Date(ts).toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' });
+      return new Date(ts).toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', hour12: !hora24() });
     if (edad < 2 * DIA) return 'Ayer';
     if (edad < 7 * DIA) return `Hace ${Math.floor(edad / DIA)} d`;
     return new Date(ts).toLocaleDateString('es-PE', { day: '2-digit', month: 'short' });
@@ -375,7 +412,7 @@
     const m = d.m;
     if (m?.proxima_sesion) {
       const p = m.proxima_sesion;
-      fill('sesion', { valor: `${p.etiqueta_fecha} · ${p.hora}`, sub: [p.camara, p.tema].filter(Boolean).join(' — '), vivo: p.etiqueta_fecha === 'Hoy' });
+      fill('sesion', { valor: `${p.etiqueta_fecha} · ${fmtHora(p.hora)}`, sub: [p.camara, p.tema].filter(Boolean).join(' — '), vivo: p.etiqueta_fecha === 'Hoy' });
     } else fill('sesion', m ? { valor: 'Sin sesiones', sub: 'en los próximos 14 días' } : { valor: '—', sub: 'La agenda oficial no respondió', sinDatos: true });
     if (d.ag) {
       // Las dos cifras cuentan lo mismo: lo que falta desde ahora. Antes el
@@ -811,7 +848,7 @@
     const detalle = p.invitado ? `Invitado: ${p.invitado}` : (p.tema || p.actividad);
     const meta = [camaraCorta(s.camara), detalle].filter(Boolean).map(esc).join(' · ');
     return `<button class="lista-item" data-preguntar="${esc(preguntaSesion(s, p))}">
-      <span class="lista-cuando">${esc(s.dia)}<small>${esc(s.hora)}</small></span>
+      <span class="lista-cuando">${esc(s.dia)}<small>${esc(fmtHora(s.hora))}</small></span>
       <span class="lista-texto"><span class="t">${esc(p.titulo)}</span>${meta ? `<span class="m">${meta}</span>` : ''}</span><span></span></button>`;
   }
   function filaProyecto(p) {
@@ -983,7 +1020,7 @@
       ? `<a class="d-btn d-btn--sm" href="${esc(s.documento)}" target="_blank" rel="noopener" title="Documento oficial de esta sesión (agenda o citación)">Ver documento (PDF)</a>` : '';
     return `
       <div class="agenda-evento${pasada ? ' is-pasada' : ''}">
-        <div class="agenda-hora">${esc(s.hora)}${pasada ? '<small>hora pasada</small>' : ''}</div>
+        <div class="agenda-hora">${esc(fmtHora(s.hora))}${pasada ? '<small>hora pasada</small>' : ''}</div>
         <div class="agenda-cuerpo">
           <div class="agenda-cab">
             ${s.camara ? `<span class="agenda-cam ${claseCamara(s.camara)}">${esc(camaraCorta(s.camara))}</span>` : ''}
@@ -1053,7 +1090,7 @@
       const num = d.getDate() === 1 || +d === +inicio
         ? d.toLocaleDateString('es-PE', { day: 'numeric', month: 'short' }) : d.getDate();
       const chips = evs.slice(0, 3).map((s) =>
-        `<span class="cal-ev ${claseCamara(s.camara)}" title="${esc(`${s.hora} · ${partesDe(s).titulo}`)}"><b>${esc(s.hora)}</b> ${esc(partesDe(s).titulo)}</span>`).join('');
+        `<span class="cal-ev ${claseCamara(s.camara)}" title="${esc(`${fmtHora(s.hora)} · ${partesDe(s).titulo}`)}"><b>${esc(fmtHora(s.hora))}</b> ${esc(partesDe(s).titulo)}</span>`).join('');
       const mas = evs.length > 3 ? `<span class="cal-mas">+${evs.length - 3} más</span>` : '';
       celdas.push(`<button class="${clases}" data-dia="${k}" ${fuera && !evs.length ? 'tabindex="-1"' : ''}
         aria-label="${esc(d.toLocaleDateString('es-PE', { weekday: 'long', day: 'numeric', month: 'long' }))}: ${evs.length} actividades">
@@ -1097,13 +1134,15 @@
   // ── Reloj de Lima (GMT-5) en la barra superior ──
   // Siempre la hora de Lima, aunque la Mac esté en otro huso: las agendas y
   // los plazos del Congreso se publican en hora peruana.
-  const fmtHoraLima = new Intl.DateTimeFormat('es-PE', {
+  const fmtHoraLima12 = new Intl.DateTimeFormat('es-PE', {
     timeZone: 'America/Lima', hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
+  const fmtHoraLima24 = new Intl.DateTimeFormat('es-PE', {
+    timeZone: 'America/Lima', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
   const fmtFechaLima = new Intl.DateTimeFormat('es-PE', {
     timeZone: 'America/Lima', weekday: 'short', day: 'numeric', month: 'short' });
   function tickReloj() {
     const ahora = new Date();
-    $('reloj-hora').textContent = fmtHoraLima.format(ahora);
+    $('reloj-hora').textContent = (hora24() ? fmtHoraLima24 : fmtHoraLima12).format(ahora);
     const fecha = fmtFechaLima.format(ahora).replace(/\./g, '');
     $('reloj-fecha').textContent = fecha.charAt(0).toUpperCase() + fecha.slice(1);
   }
