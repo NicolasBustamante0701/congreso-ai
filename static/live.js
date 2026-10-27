@@ -485,7 +485,7 @@ async function runAnalysis() {
 // encabezado (también en el PDF/Word exportado). Antes era un parser mínimo
 // que no dibujaba tablas.
 function renderMd(text) {
-  return DianaMD.render(text, { tramos: true });
+  return DianaMD.render(text, { tramos: true, personas: true });
 }
 
 /* ── Countdown ───────────────────────────────────────── */
@@ -538,6 +538,7 @@ function buildPrintHtml(title, bodyHtml) {
   h3{font-size:12pt;font-weight:bold;margin:16px 0 6px}
   p{margin-bottom:9px} ul,ol{padding-left:20px;margin-bottom:9px} li{margin-bottom:4px}
   .ts{font-weight:bold;color:#555;margin-right:8px;font-variant-numeric:tabular-nums}
+  .persona{color:#c62828;font-weight:bold}
   strong{font-weight:bold}
   table{border-collapse:collapse;width:100%;margin:12px 0;font-size:10pt}
   th{background:#111;color:#fff;padding:6px 10px;text-align:left;font-weight:bold}

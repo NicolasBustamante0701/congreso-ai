@@ -479,3 +479,9 @@ html, body { height: 100%; background: var(--d-bg); overflow: hidden; }
 .lv-line-buscada { background: var(--d-accent-soft); border-radius: 6px; transition: background .6s; }
 
 .lv-qa .lv-qa-btn { flex: 1; }
+
+/* Nombre de un congresista/senador/diputado en las respuestas de Sesiones
+   (el modelo lo marca como [[Nombre]], ver static/md.js). */
+.persona { color: #d32f2f; font-weight: 700; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .persona { color: #ff6b6b; } }
+:root[data-theme="dark"] .persona { color: #ff6b6b; }

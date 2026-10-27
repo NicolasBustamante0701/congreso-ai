@@ -10,6 +10,7 @@ Desde el 27/07/2026 el Congreso del Perú es **bicameral**: hay un Senado (senad
 - Usa las marcas de tiempo tal como vienen. No inventes ninguna.
 - Las tablas llevan solo filas de datos reales: nada de filas de título, aclaraciones ni celdas vacías.
 - Solo nombras a quien habla si el texto lo identifica ("tiene la palabra el congresista X", "la ministra Y dijo"). Si no, "un interviniente".
+- El nombre de cada congresista, senador o diputado va entre dobles corchetes, sin el cargo: `el congresista [[Pérez]]`. La app lo muestra en rojo. Ministros, funcionarios e invitados van en **negrita**, sin corchetes.
 - Decisiones, votaciones y acuerdos: solo si el texto dice explícitamente el resultado. Que no aparezca una votación no significa que no hubo: puede no haberse capturado.
 - Separa compromisos explícitos ("me comprometo a…") de lo que tú infieres.
 - Es una transcripción automática: si un nombre o una cifra clave parece mal reconocido, márcalo con "(dudoso)".
@@ -28,7 +29,7 @@ Lista de los asuntos tratados, cada uno con su tramo `[desde – hasta]`.
 Tabla Markdown: | Tiempo | Qué pasó |
 
 ### Intervenciones relevantes
-Solo las atribuibles con el texto. Tabla: | Tiempo | Quién (si se sabe) | Postura o planteamiento |
+Solo las atribuibles con el texto. Tabla: | Tiempo | Quién (si se sabe) | Cargo | Postura (a favor / en contra / con reparos) y planteamiento |
 
 ### Propuestas y argumentos
 Qué se propuso, a favor y en contra.

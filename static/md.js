@@ -44,6 +44,12 @@
         return TS_LINE.test(t) ? `\n<h3 class="ts">${esc(t)}</h3>\n` : l;
       }).join('\n');
     }
+    if (opts.personas) {
+      // "[[Nombre]]" → nombre de un legislador resaltado en rojo (Sesiones).
+      // Se escapa el nombre: nada de lo que escriba el modelo entra como HTML.
+      fuente = fuente.replace(/\[\[([^\[\]\n]{2,80})\]\]/g,
+        (_, n) => `<span class="persona">${esc(n.trim())}</span>`);
+    }
     return DOMPurify.sanitize(marked.parse(fuente), {
       ALLOWED_TAGS,
       ADD_ATTR: ['target', 'rel'],
