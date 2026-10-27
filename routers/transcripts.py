@@ -8,7 +8,7 @@ from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from config import LLM_API_KEY, load_prompt, logger
-from services import llm, sse, transcripts
+from services import llm, oradores, sse, transcripts
 
 router = APIRouter()
 
@@ -112,9 +112,54 @@ async def preguntar(video_id: str, request: Request):
     if not LLM_API_KEY:
         return _sin_key()
 
-    fragmentos, modo = transcripts.fragmentos_para_pregunta(video_id, pregunta)
+    persona = transcripts.persona_en_pregunta(pregunta)
+    # Más amplio que `persona`: "qué dijo perez" (en minúsculas) también puede
+    # ser sobre alguien; eso lo decide el índice de oradores.
+    posible = persona is not None or transcripts.posible_pregunta_persona(pregunta)
+    rango = transcripts.rango_en_pregunta(pregunta)
 
     async def generate():
+        fragmentos, modo, turnos, indice_txt = [], "nada", [], ""
+        if posible and not rango:
+            async for aviso in oradores.asegurar(video_id):
+                yield sse.status(aviso)
+            turnos = oradores.listar(video_id)
+            suyos = oradores.buscar(turnos, pregunta, cargo=(persona or {}).get("cargo", ""),
+                                    estricto=persona is None)
+            if suyos:
+                fragmentos, recortado = oradores.fragmentos_de_turnos(video_id, suyos)
+                indice_txt = oradores.como_texto(suyos)
+                modo = ("persona: intervenciones según el índice de oradores (deducido por IA de "
+                        "la transcripción)" + ("; hay más intervenciones que no entraron" if recortado else ""))
+        if not fragmentos and persona and not rango:
+            fragmentos = transcripts.fragmentos_de_persona(video_id, persona)
+            if fragmentos:
+                modo = (f"persona: menciones de «{persona['busqueda']}» y los minutos siguientes "
+                        "(su posible intervención)")
+        if not fragmentos:
+            fragmentos, modo = transcripts.fragmentos_para_pregunta(video_id, pregunta)
+            if persona and modo == "completa":
+                modo = (f"completa: «{persona['busqueda']}» no aparece nombrado en la transcripción; "
+                        "va la sesión entera por si se lo identifica de otra forma")
+
+        if not fragmentos and persona:
+            if persona["nombre"]:
+                # En rojo solo los legisladores (como pide el prompt); el resto en negrita.
+                legislador = not persona["cargo"] or transcripts.es_legislador(persona["cargo"])
+                marca = f"[[{persona['nombre']}]]" if legislador else f"**{persona['nombre']}**"
+                quien = (persona["cargo"] + " " if persona["cargo"] else "") + marca
+            else:
+                quien = f"el/la {persona['cargo']}"
+            presentes = oradores.nombres_distintos(turnos)
+            yield sse.text(f"**No hay intervenciones de {quien} en lo transcrito de esta sesión:** "
+                           "no aparece nombrado ni se le da la palabra."
+                           + (("\n\nEn lo transcrito intervienen: " + ", ".join(presentes)
+                               + ". Si el nombre se reconoció mal, puede ser alguno de ellos.")
+                              if presentes else
+                              " Si el nombre pudo reconocerse mal, prueba solo con el apellido.")
+                           + "\n\n_" + _texto_cobertura(datos) + "_")
+            yield sse.DONE
+            return
         if not fragmentos:
             # Sin evidencia no se le pregunta al modelo: contestaría de memoria.
             yield sse.text("No aparece en lo transcrito de esta sesión. "
@@ -128,7 +173,9 @@ async def preguntar(video_id: str, request: Request):
         contexto = (f"Sesión: \"{datos['sesion']['titulo']}\"\n"
                     f"Cobertura: {_texto_cobertura(datos)}\n"
                     f"Cómo se eligieron los fragmentos: {modo}\n\n"
-                    f"FRAGMENTOS (transcripción automática):\n{transcripts.como_texto(fragmentos)}")
+                    + (f"ÍNDICE DE ORADORES (quién habla en cada tramo, deducido por IA de las "
+                       f"pistas del texto):\n{indice_txt}\n\n" if indice_txt else "")
+                    + f"FRAGMENTOS (transcripción automática):\n{transcripts.como_texto(fragmentos)}")
         messages = ([{"role": "system", "content": QA_PROMPT}]
                     + historial
                     + [{"role": "user", "content": f"{contexto}\n\nPREGUNTA: {pregunta}"}])

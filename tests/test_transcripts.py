@@ -20,6 +20,9 @@ VID = "abc123"
 @pytest.fixture(autouse=True)
 def db_temporal(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "diana.db")
+    # Las capturas del video salen a YouTube: en los tests, sin placas.
+    from services import placas
+    monkeypatch.setattr(placas, "capturar", lambda *a, **k: [])
 
 
 def _cargar(textos, vid=VID, en_vivo=False):
@@ -176,3 +179,154 @@ def test_cobertura_aclara_si_los_tiempos_son_del_video():
     tr.iniciar_sesion("vivo1", "🔴 EN VIVO", en_vivo=True)
     tr.guardar_ventana("vivo1", 0, 10, "x", "ok")
     assert "de captura" in _texto_cobertura(tr.obtener("vivo1"))
+
+
+# ── preguntas sobre una persona ─────────────────────────────────────────────
+
+@pytest.mark.parametrize("pregunta,nombre,cargo", [
+    ("¿Qué dijo el congresista Pérez Gómez?", "Pérez Gómez", "congresista"),
+    ("cuál fue la posición de la ministra Ana Torres", "Ana Torres", "ministra"),
+    ("¿qué dijo el ministro?", "", "ministro"),
+    ("¿Qué opinó Flor Meza sobre el canon?", "Flor Meza canon", ""),
+])
+def test_persona_en_pregunta(pregunta, nombre, cargo):
+    p = tr.persona_en_pregunta(pregunta)
+    assert p is not None and p["cargo"] == cargo
+    assert p["nombre"].startswith(nombre.split(" canon")[0])
+
+
+@pytest.mark.parametrize("pregunta", ["¿qué se dijo del canon?", "resume la sesión", "¿hubo votación?"])
+def test_no_es_pregunta_de_persona(pregunta):
+    assert tr.persona_en_pregunta(pregunta) is None
+
+
+def test_fragmentos_de_persona_traen_su_intervencion(monkeypatch):
+    monkeypatch.setattr(tr, "VENTANAS_INTERVENCION", 3)
+    _cargar(["apertura", "tiene la palabra el congresista Pérez",
+             "estoy en contra del dictamen", "porque recorta el presupuesto",
+             "y no fue consultado", "otro tema", "cierre"])
+    frag = tr.fragmentos_de_persona(VID, tr.persona_en_pregunta("¿Qué dijo el congresista Pérez?"))
+    textos = [f["texto"] for f in frag]
+    assert textos[:5] == ["apertura", "tiene la palabra el congresista Pérez",
+                          "estoy en contra del dictamen", "porque recorta el presupuesto",
+                          "y no fue consultado"]
+    assert "cierre" not in textos
+
+
+async def test_preguntar_por_persona_ausente_lo_dice_y_resalta(api, monkeypatch):
+    monkeypatch.setattr(tr, "MAX_CHARS_TRANSCRIPT_COMPLETO", 5)
+    _cargar(["el ministro expuso el presupuesto", "más texto largo"])
+
+    async def no_deberia(*a, **k):
+        raise AssertionError("sin evidencia no se le pregunta al modelo")
+        yield
+
+    with patch("routers.transcripts.LLM_API_KEY", "x"), \
+         patch("routers.transcripts.llm.stream", no_deberia):
+        r = await api.post(f"/transcripts/{VID}/preguntar",
+                           json={"pregunta": "¿Qué dijo la congresista Huamán?"})
+    assert "No hay intervenciones de congresista [[Huamán]]" in _textos(r.text)
+
+
+# ── índice de oradores ──────────────────────────────────────────────────────
+
+from services import oradores  # noqa: E402
+
+_SESION_ORADORES = [
+    "se abre la sesión", "tiene la palabra el congresista Huamán",
+    "gracias presidente, estoy en contra del dictamen", "porque recorta el presupuesto regional",
+    "gracias congresista Huamán, tiene la palabra la ministra Torres",
+    "señor presidente, el ejecutivo apoya la propuesta", "cierre de la sesión",
+]
+
+
+def test_parsear_descarta_nombres_que_no_estan_en_el_texto():
+    _cargar(_SESION_ORADORES)
+    segs = tr.obtener(VID)["segmentos"]
+    resp = ("00:00:10 | Huamán | congresista | tiene la palabra\n"
+            "00:00:40 | Torres | ministra | tiene la palabra la ministra\n"
+            "00:00:20 | Pedro Inventado | congresista | nada\n"
+            "00:00:30 | Huamán | congresista | la mesa liderada por el congresista Huamán\n"
+            "00:00:50 |  |  | señor presidente, el ejecutivo\n"
+            "basura sin formato\n"
+            "09:00:00 | Huamán | congresista | fuera de rango")
+    turnos = oradores.parsear(resp, segs)
+    # La mención ("liderada por") no es un turno; el orador sin nombre sí (corta al anterior).
+    assert [(t["start_s"], t["nombre"]) for t in turnos] == [(10, "Huamán"), (40, "Torres"), (50, "")]
+
+
+def test_buscar_tolera_minusculas_y_nombre_mal_escrito():
+    turnos = [{"start_s": 10, "end_s": 40, "nombre": "Huamán", "cargo": "congresista", "pista": ""},
+              {"start_s": 40, "end_s": 70, "nombre": "Torres", "cargo": "ministra", "pista": ""}]
+    assert [t["nombre"] for t in oradores.buscar(turnos, "que dijo huaman")] == ["Huamán"]
+    assert [t["nombre"] for t in oradores.buscar(turnos, "qué dijo Guamán")] == ["Huamán"]
+    assert [t["nombre"] for t in oradores.buscar(turnos, "¿qué dijo la ministra?", cargo="ministra")] == ["Torres"]
+    assert oradores.buscar(turnos, "qué dijo Rodríguez") == []
+
+
+async def test_preguntar_usa_el_indice_de_oradores(api):
+    _cargar(_SESION_ORADORES)
+    visto = {}
+
+    async def fake_stream(messages, **kw):
+        if messages[0]["content"] == oradores.PROMPT:
+            yield ("text", "00:00:10 | Huamán | congresista | tiene la palabra el congresista Huamán\n"
+                           "00:00:40 | Torres | ministra | tiene la palabra la ministra Torres")
+            return
+        visto["prompt"] = messages[-1]["content"]
+        yield ("text", "[[Huamán]] está en contra [00:00:20].")
+
+    with patch("routers.transcripts.LLM_API_KEY", "x"), \
+         patch("routers.transcripts.llm.stream", fake_stream):
+        r = await api.post(f"/transcripts/{VID}/preguntar",
+                           json={"pregunta": "que dijo guaman"})     # minúsculas y mal escrito
+    assert "[[Huamán]] está en contra" in _textos(r.text)
+    assert "ÍNDICE DE ORADORES" in visto["prompt"]
+    assert "estoy en contra del dictamen" in visto["prompt"]
+    assert "el ejecutivo apoya" not in visto["prompt"]      # eso es de la ministra
+    # El índice quedó guardado: la segunda pregunta no lo vuelve a armar.
+    assert len(oradores.listar(VID)) == 2
+
+
+# ── placas leídas del video ─────────────────────────────────────────────────
+
+from services import placas  # noqa: E402
+
+
+def _obs(texto, x=0.5, y=0.3, w=0.2, h=0.04, conf=0.9):
+    return {"texto": texto, "conf": conf, "x": x, "y": y, "w": w, "h": h}
+
+
+def test_elegir_placa_toma_la_principal_y_su_cargo():
+    obs = [_obs("CÉSAR ALFONSO LUNA VICTORIA", x=0.53, y=0.22, w=0.22, h=0.04),
+           _obs("Superintendente Nacional de Aduanas y de", x=0.55, y=0.19, w=0.18, h=0.015),
+           _obs("CLAUDIA FREYRE SANTA MARIA", x=0.30, y=0.20, w=0.10, h=0.02),   # placa de al lado, chica
+           _obs("CONGRESO", x=0.88, y=0.9), _obs("DE MANANT", x=0.0, y=0.2),
+           _obs("San Mateo", x=0.0, y=0.25)]
+    p = placas.elegir_placa(obs)
+    assert p["nombre"] == "CÉSAR ALFONSO LUNA VICTORIA"
+    assert p["cargo"].startswith("Superintendente Nacional")
+
+
+def test_elegir_placa_sin_placa():
+    assert placas.elegir_placa([_obs("CONGRESO TV DIGITAL"), _obs("PATRIARI")]) is None
+
+
+async def test_indice_usa_las_placas_del_video(monkeypatch):
+    # El texto no nombra a nadie: solo la placa dice quién habla.
+    _cargar(["buenas tardes señor presidente", "la recaudación subió este año", "eso es todo"])
+    monkeypatch.setattr(placas, "disponible", lambda: True)
+    monkeypatch.setattr(placas, "capturar", lambda vid, a, b: [
+        {"start_s": 0, "nombre": "CESAR LUNA VICTORIA", "cargo": "Superintendente SUNAT"}])
+    visto = {}
+
+    async def fake_stream(messages, **kw):
+        visto["entrada"] = messages[-1]["content"]
+        yield ("text", "00:00:00 | CESAR LUNA VICTORIA | Superintendente SUNAT | placa en pantalla")
+
+    with patch("services.oradores.llm.stream", fake_stream):
+        async for _ in oradores.asegurar(VID):
+            pass
+    assert "(EN PANTALLA: placa «CESAR LUNA VICTORIA» — Superintendente SUNAT)" in visto["entrada"]
+    assert [t["nombre"] for t in oradores.listar(VID)] == ["CESAR LUNA VICTORIA"]
+    assert oradores.buscar(oradores.listar(VID), "qué dijo luna victoria")

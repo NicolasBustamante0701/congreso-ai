@@ -8,6 +8,7 @@ actualización de la app nunca borra lo que el usuario ya tenía guardado.
   v1  sesiones transcritas, ventanas de audio y su índice FTS5
   v2  proyectos seguidos y alertas de cambios
   v3  documentos PDF completos, por página, con índice FTS5
+  v4  índice de oradores de cada sesión (quién habla desde qué segundo)
 """
 import sqlite3
 from contextlib import contextmanager
@@ -16,7 +17,7 @@ import config
 from config import logger
 
 DB_PATH = config.DB_FILE
-VERSION_ESQUEMA = 3
+VERSION_ESQUEMA = 4
 
 _MIGRACIONES = {
     1: """
@@ -104,6 +105,20 @@ _MIGRACIONES = {
         CREATE TRIGGER documento_pagina_ad AFTER DELETE ON documento_pagina BEGIN
             INSERT INTO documento_fts(documento_fts, rowid, texto) VALUES ('delete', old.rowid_, old.texto);
         END;
+    """,
+    4: """
+        CREATE TABLE orador (
+            video_id  TEXT NOT NULL REFERENCES sesion(video_id) ON DELETE CASCADE,
+            start_s   INTEGER NOT NULL,
+            nombre    TEXT NOT NULL DEFAULT '',
+            cargo     TEXT NOT NULL DEFAULT '',
+            pista     TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY (video_id, start_s, nombre)
+        );
+        CREATE TABLE orador_indice (
+            video_id  TEXT PRIMARY KEY REFERENCES sesion(video_id) ON DELETE CASCADE,
+            hasta_s   INTEGER NOT NULL DEFAULT 0
+        );
     """,
 }
 

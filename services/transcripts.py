@@ -97,6 +97,11 @@ def guardar_ventana(video_id: str, start_s: int, end_s: int, texto: str, estado:
                     (video_id, end_s, start_s))
         con.execute("INSERT INTO ventana (video_id, start_s, end_s, texto, estado) VALUES (?, ?, ?, ?, ?)",
                     (video_id, int(start_s), int(end_s), texto or "", estado))
+        # Si se re-transcribe un tramo ya leído por el índice de oradores
+        # (services/oradores), ese tramo se vuelve a leer la próxima vez.
+        con.execute("DELETE FROM orador WHERE video_id = ? AND start_s >= ?", (video_id, int(start_s)))
+        con.execute("UPDATE orador_indice SET hasta_s = MIN(hasta_s, ?) WHERE video_id = ?",
+                    (int(start_s), video_id))
         con.execute("UPDATE sesion SET actualizado = ? WHERE video_id = ?", (_ahora(), video_id))
 
 
@@ -283,6 +288,110 @@ def fragmentos_para_pregunta(video_id: str, pregunta: str) -> tuple[list[dict], 
     if sum(len(s["texto"]) for s in segs) <= MAX_CHARS_TRANSCRIPT_COMPLETO:
         return segs, "completa"
     return [], "nada"
+
+
+# ── Preguntas sobre una persona ("¿qué dijo el congresista X?") ─────────────
+#
+# La transcripción no sabe quién habla: a una persona se la ubica porque la
+# nombran ("tiene la palabra el congresista X") y su intervención sigue en
+# los minutos siguientes. Con la búsqueda normal (ventana anterior y
+# siguiente, 30 s) la intervención quedaba cortada en la primera frase.
+
+_PREGUNTA_PERSONA = re.compile(
+    r"\b(dij\w*|dice|habl\w*|opin\w*|posici[oó]n|postura|plante\w*|sostuv\w*|"
+    r"defendi\w*|propus\w*|propuso|critic\w*|intervin\w*|intervenci[oó]n\w*|"
+    r"argument\w*|pens\w*|votar\w*|vot[oó]|respondi\w*|pidi[oó]|pregunt[oó])\b",
+    re.IGNORECASE)
+_CARGOS = re.compile(
+    r"\b(congresistas?|senador(?:a|es|as)?|diputad[oa]s?|parlamentari[oa]s?|"
+    r"ministr[oa]s?|viceministr[oa]s?|presidente|presidenta|premier|"
+    r"vicepresident[ea]s?|fiscal|contralor(?:a)?|defensor(?:a)?|alcalde(?:sa)?|"
+    r"gobernador(?:a)?|jefe|jefa|director(?:a)?|superintendente|invitad[oa]s?|"
+    r"funcionari[oa]s?|vocero|vocera|relator(?:a)?)\b", re.IGNORECASE)
+# Palabras de la pregunta que no son ni nombre ni cargo.
+_NO_NOMBRE = _VACIAS | set("""
+cual cuál fue era es su sus posicion posición postura opinion opinión respecto tema
+sobre acerca qué que dijo dice dijeron habló hablo opina opinó planteó planteo sostuvo
+defendió propuso criticó intervino intervención intervenciones argumentó piensa votó
+votaría respondió pidió preguntó señor señora doctor doctora del de la el
+""".split())
+# Ventanas de 10 s que se toman después de cada mención: ~4 minutos.
+VENTANAS_INTERVENCION = 24
+MAX_CHARS_PERSONA = 16000
+
+
+def _sin_tildes(t: str) -> str:
+    return t.translate(str.maketrans("áéíóúü", "aeiouu"))
+
+
+# "¿qué se dijo del canon?", "¿de qué se habló?": impersonal, no es una persona.
+_IMPERSONAL = re.compile(r"\bse\s+(dij|dic|habl|trat|mencion|plante|propus|propuso|discuti|debati)",
+                         re.IGNORECASE)
+
+
+def posible_pregunta_persona(pregunta: str) -> bool:
+    """Puede ser sobre una persona aunque el nombre venga en minúsculas ("qué dijo perez")."""
+    if _CARGOS.search(pregunta):
+        return True
+    return bool(_PREGUNTA_PERSONA.search(pregunta)) and not _IMPERSONAL.search(pregunta)
+
+
+def persona_en_pregunta(pregunta: str) -> dict | None:
+    """
+    Si la pregunta es sobre lo que dijo una persona, devuelve
+    {"nombre": "Pérez Gómez" | "", "cargo": "congresista" | "", "busqueda": "..."}.
+    None si no es una pregunta sobre una persona.
+    """
+    cargo = _CARGOS.search(pregunta)
+    verbo = _PREGUNTA_PERSONA.search(pregunta)
+    if not verbo and not cargo:
+        return None
+    sin_cargo = _CARGOS.sub(" ", pregunta)
+    # El nombre: palabras que no son vacías, de 3+ letras, tal como las
+    # escribió el usuario para mostrarlas en la respuesta.
+    nombre = [w for w in re.findall(r"\w+", sin_cargo)
+              if len(w) >= 3 and w.lower() not in _NO_NOMBRE and not w.isdigit()]
+    if not cargo and not (verbo and nombre):
+        return None
+    if not cargo and not any(w[0].isupper() for w in nombre):
+        # "¿qué se dijo del canon?" no es sobre una persona.
+        return None
+    cargo_txt = cargo.group(0).lower() if cargo else ""
+    nombre_txt = " ".join(nombre[:4])
+    return {"nombre": nombre_txt, "cargo": cargo_txt, "busqueda": nombre_txt or cargo_txt}
+
+
+def es_legislador(cargo: str) -> bool:
+    return bool(re.match(r"(congresist|senador|diputad|parlamentari)", (cargo or "").lower()))
+
+
+def fragmentos_de_persona(video_id: str, persona: dict) -> list[dict]:
+    """Cada mención de la persona y los ~4 minutos siguientes (su intervención)."""
+    datos = obtener(video_id)
+    if not datos or not persona.get("busqueda"):
+        return []
+    segs = datos["segmentos"]
+    hits = buscar(persona["busqueda"], video_id=video_id, limite=MAX_FRAGMENTOS)
+    if persona["nombre"] and hits:
+        # Con nombre, solo cuentan las ventanas que lo traen de verdad: el OR
+        # del buscador también acierta con una sola palabra del nombre.
+        # Si ninguna ventana trae dos palabras del nombre, vale una (en la
+        # sala suelen nombrar solo el apellido: "congresista Pérez").
+        claves = [_sin_tildes(p.lower()[:6]) for p in persona["nombre"].split()]
+        cuantas = [(h, sum(c in _sin_tildes(h["texto"].lower()) for c in claves)) for h in hits]
+        minimo = 2 if len(claves) > 1 and any(n >= 2 for _, n in cuantas) else 1
+        hits = [h for h, n in cuantas if n >= minimo]
+    por_inicio = {s["start_s"]: i for i, s in enumerate(segs)}
+    elegidos: set[int] = set()
+    for h in sorted(hits, key=lambda h: h["start_s"]):
+        i = por_inicio.get(h["start_s"])
+        if i is None:
+            continue
+        nuevos = {j for j in range(i - 1, i + VENTANAS_INTERVENCION + 1) if 0 <= j < len(segs)}
+        if elegidos and sum(len(segs[j]["texto"]) for j in elegidos | nuevos) > MAX_CHARS_PERSONA:
+            break
+        elegidos |= nuevos
+    return [segs[j] for j in sorted(elegidos)]
 
 
 def como_texto(segmentos: list[dict]) -> str:
