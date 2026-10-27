@@ -249,7 +249,9 @@ def test_nomina_comision_permanente():
     assert sum(m["camara"] == "Cámara de Diputados" for m in miembros) == 14
     assert miembros[0] == {"nombre": "Aguinaga Recuenco, Alejandro Aurelio", "camara": "Senado",
                            "grupo_parlamentario": "FUERZA POPULAR",
-                           "email": "aaguinaga@congreso.gob.pe"}
+                           "email": "aaguinaga@congreso.gob.pe",
+                           "foto": "https://senado.congreso.gob.pe/wp-content/uploads/2026/07/Aguinaga-Recuenco-Alejandro.png",
+                           "perfil": "https://senado.congreso.gob.pe/senador/aguinaga-recuenco-alejandro-aurelio/"}
 
 
 def test_integrantes_comision_del_senado():
@@ -418,3 +420,50 @@ def test_unir_visor_agrega_las_que_faltan_y_no_duplica():
     assert todas[0]["organiza"] == "Comisión Energía y Minas"      # ordenadas por hora
     assert todas[1]["lugar"] == "Sala 1" and todas[1]["estado"] == "Convocada"
     assert todas[2]["camara"] == "Senado"
+
+
+# ── Comisiones en la app: ficha de cada integrante ──────────
+
+_FICHA_HTML = """<html><body><header>menú</header><main>
+<h1>Huamán Cornejo, Miguel Felix</h1><p>Ficha de Diputado</p>
+<p>Partido político</p><p>Partido del Buen Gobierno</p>
+<p>Periodo de funciones</p><p>2026 - 2031</p>
+<p>Grupo parlamentario</p><p>Partido del Buen Gobierno</p>
+<p>Representa a</p><p>Piura</p>
+<p>Condición</p><p>No registrada</p>
+<p>Votación obtenida</p><p>5,191</p>
+<p>Correo institucional</p><p>mhuamanc@congreso.gob.pe</p></main></body></html>"""
+
+
+def test_parsear_ficha_de_legislador():
+    from scraper import _parsear_ficha
+    f = _parsear_ficha(_FICHA_HTML)
+    assert f["representa_a"] == "Piura" and f["votacion"] == "5,191"
+    assert f["partido_politico"] == "Partido del Buen Gobierno"
+    assert f["email"] == "mhuamanc@congreso.gob.pe"
+    assert "condicion" not in f          # "No registrada" no se muestra
+
+
+def test_tabla_de_miembros_trae_foto_y_perfil():
+    from scraper import _parsear_tabla_miembros
+    html = """<table><tr><th>Foto</th><th>Apellidos y Nombres</th><th>Grupo Parlamentario</th>
+    <th>Cargo</th><th>e-Mail</th></tr><tr>
+    <td><img src="https://diputados.congreso.gob.pe/wp-content/uploads/a.png"></td>
+    <td><a href="https://diputados.congreso.gob.pe/diputado/x/">Pérez, Ana</a></td>
+    <td>FUERZA POPULAR</td><td>Presidenta</td><td>aperez@congreso.gob.pe</td></tr>
+    <tr><td><img src="https://evil.com/a.png"></td><td><a href="https://evil.com/p">Otro, Uno</a></td>
+    <td>X</td><td>Titular</td><td>o@congreso.gob.pe</td></tr></table>"""
+    m = _parsear_tabla_miembros(html)
+    assert m[0]["foto"].endswith("/a.png") and m[0]["perfil"].endswith("/diputado/x/")
+    assert m[0]["camara"] == "Cámara de Diputados" and m[0]["cargo"] == "Presidenta"
+    assert "foto" not in m[1] and "perfil" not in m[1]     # fuera del dominio del Congreso
+
+
+async def test_detalle_rechaza_paginas_fuera_del_indice(monkeypatch):
+    import scraper
+
+    async def indices(c, camaras):
+        return {"Senado": {"Comisión de Salud": "https://senado.congreso.gob.pe/salud/"}}
+    monkeypatch.setattr(scraper, "_indices_comisiones", indices)
+    r = await scraper.fetch_comision_detalle("https://evil.com/comision/")
+    assert "error" in r

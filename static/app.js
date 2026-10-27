@@ -128,7 +128,7 @@
   // ════════════════════════════════════════════════════════════════════════
   // Navegación entre vistas
   // ════════════════════════════════════════════════════════════════════════
-  const VISTAS = ['inicio', 'diana', 'agenda', 'sesiones', 'documentos', 'seguimiento', 'buscar', 'expediente', 'ajustes'];
+  const VISTAS = ['inicio', 'diana', 'agenda', 'comisiones', 'sesiones', 'documentos', 'seguimiento', 'buscar', 'expediente', 'ajustes'];
   const FRAMES = { sesiones: ['live-iframe', '/live'], documentos: ['pdfs-iframe', '/pdfs'] };
   const alEntrar = {};       // vista → función que la refresca al mostrarse
   let vistaActual = null;
@@ -1154,6 +1154,246 @@
   document.querySelectorAll('#agenda-vista .seg-btn').forEach((b) => b.addEventListener('click', () => elegirVista(b.dataset.vista)));
   elegirVista(agendaVista);
   alEntrar.agenda = () => cargarAgenda();
+
+  // ── Comisiones: integrantes con cargo, grupo, partido, región y correo ──
+  // Fuente: la página de cada comisión y la ficha de cada legislador en los
+  // portales del Senado y de Diputados (ver scraper.fetch_comision_detalle).
+  let comListado = null;
+  let comActual = null;
+  const comDetalles = {};          // url → detalle ya cargado
+  let comIntegrantes = null;       // todos los integrantes de todas las comisiones
+  const COM_COLORES = ['#a8172f', '#2456b8', '#1f7a4d', '#9a5b00', '#6b3fa0', '#0f7c86', '#b0476b', '#5f6b2f', '#7b7b85'];
+
+  async function cargarComisiones(forzar = false) {
+    if (comListado && !forzar) { pintarListaComisiones(); return; }
+    $('com-lista').innerHTML = '<div class="lista-cargando">Consultando los portales del Senado y de Diputados…</div>';
+    try {
+      const r = await fetch('/comisiones');
+      comListado = await r.json();
+    } catch (e) {
+      comListado = { error: `No se pudo conectar: ${e.message}` };
+    }
+    pintarListaComisiones();
+    if (!comIntegrantes) {
+      fetch('/comisiones/integrantes').then((r) => r.json()).then((d) => {
+        if (!d.integrantes) return;
+        comIntegrantes = d.integrantes;
+        pintarListaComisiones();
+        // La comisión abierta gana el "También integra" de cada uno.
+        if (comActual && comDetalles[comActual]) pintarComision(comDetalles[comActual]);
+      }).catch(() => { /* sin índice: se busca solo en las abiertas */ });
+    }
+  }
+
+  function nombreCorto(n) {
+    return String(n || '').replace(/^Comisi[oó]n (en asuntos )?de(l)? /i, '').replace(/^Comisi[oó]n en asuntos /i, '');
+  }
+
+  function pintarListaComisiones() {
+    const el = $('com-lista');
+    if (!comListado || comListado.error) {
+      el.innerHTML = `<p class="com-vacio">${esc(comListado?.error || 'Sin datos.')}</p>`;
+      return;
+    }
+    const q = DianaFiltro($('com-filtro').value);
+    const marcar = (t) => q ? esc(t).replace(new RegExp(`(${q.re})`, 'ig'), '<mark>$1</mark>') : esc(t);
+    const enMiembros = (url) => {
+      if (!q) return [];
+      if (comIntegrantes) {
+        return comIntegrantes.filter((p) => p.comisiones.some((c) => c.url === url)
+          && q.test([p.nombre, p.grupo_parlamentario].join(' ')));
+      }
+      const d = comDetalles[url];
+      return (d?.miembros || []).filter((m) => q.test([m.nombre, m.grupo_parlamentario, m.partido_politico, m.representa_a].join(' ')));
+    };
+    const item = (c, camara) => {
+      const hits = enMiembros(c.url);
+      if (q && !q.test(c.nombre) && !hits.length) return '';
+      const sub = hits.length ? `Integrante: ${hits.slice(0, 2).map((m) => marcar(m.nombre)).join(', ')}${hits.length > 2 ? '…' : ''}`
+        : esc([camara, c.tipo].filter(Boolean).join(' · '));
+      return `<button class="com-item${comActual === c.url ? ' is-on' : ''}" data-url="${esc(c.url)}" role="listitem">
+        ${marcar(nombreCorto(c.nombre))}<small>${sub}</small></button>`;
+    };
+    let html = '';
+    if (q && comIntegrantes) {
+      const personas = comIntegrantes.filter((p) => q.test(p.nombre)).slice(0, 8);
+      if (personas.length) {
+        html += `<p class="com-grupo-t">Legisladores</p>` + personas.map((p, i) =>
+          `<button class="com-item com-persona" data-persona="${comIntegrantes.indexOf(p)}" role="listitem">
+            ${marcar(p.nombre)}<small>${esc(camaraCorta(p.camara))} · ${p.comisiones.length} comisi${p.comisiones.length === 1 ? 'ón' : 'ones'}</small></button>`).join('');
+      }
+    }
+    for (const cam of comListado.camaras) {
+      const filas = cam.comisiones.map((c) => item(c, cam.camara)).join('');
+      if (filas) html += `<p class="com-grupo-t">${esc(cam.camara)}</p>${filas}`;
+      else if (cam.error && !q) html += `<p class="com-grupo-t">${esc(cam.camara)}</p><p class="d-hint">${esc(cam.error)}</p>`;
+    }
+    const perm = comListado.comision_permanente;
+    const filaPerm = item({ ...perm, tipo: 'Senadores y diputados' }, 'Congreso');
+    if (filaPerm) html += `<p class="com-grupo-t">Congreso</p>${filaPerm}`;
+    el.innerHTML = html || `<p class="com-vacio">Nada coincide.${comIntegrantes ? '' : ' Todavía se están cargando los integrantes de todas las comisiones.'}</p>`;
+  }
+
+  // Filtro sin tildes ni mayúsculas.
+  function DianaFiltro(texto) {
+    const norm = (t) => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    const q = norm(texto).trim();
+    if (!q) return null;
+    const re = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/[aeiou]/g, (v) => `[${v}${{ a: 'á', e: 'é', i: 'í', o: 'ó', u: 'úü' }[v]}]`);
+    return { re, test: (t) => norm(t).includes(q) };
+  }
+
+  async function abrirComision(url) {
+    comActual = url;
+    pintarListaComisiones();
+    const el = $('com-detalle');
+    el.innerHTML = '<div class="lista-cargando">Leyendo la página de la comisión y la ficha de cada integrante… (la primera vez tarda unos segundos)</div>';
+    let d;
+    try {
+      d = comDetalles[url] || await (await fetch(`/comisiones/detalle?url=${encodeURIComponent(url)}`)).json();
+    } catch (e) {
+      d = { error: `No se pudo conectar: ${e.message}` };
+    }
+    if (comActual !== url) return;      // el usuario ya eligió otra
+    if (!d.error) comDetalles[url] = d;
+    pintarComision(d);
+  }
+
+  function pintarComision(d) {
+    const el = $('com-detalle');
+    if (d.error) { el.innerHTML = `<p class="com-vacio">${esc(d.error)}</p>`; return; }
+    const total = d.miembros.length || 1;
+    const colores = {};
+    d.por_grupo.forEach(([g], i) => { colores[g] = COM_COLORES[Math.min(i, COM_COLORES.length - 1)]; });
+    const barra = d.por_grupo.map(([g, n]) => `<span style="width:${(n / total) * 100}%;background:${colores[g]}" title="${esc(g)}: ${n}"></span>`).join('');
+    const leyenda = d.por_grupo.map(([g, n]) => `<span><i style="background:${colores[g]}"></i>${esc(g)} <b>${n}</b></span>`).join('');
+    const MESA = /presiden|secretari/i;
+    const iniciales = (n) => String(n || '').split(',')[0].split(' ').filter(Boolean).slice(0, 2).map((p) => p[0]).join('');
+    const dato = (etq, v) => (v ? `<dt>${etq}</dt><dd>${esc(v)}</dd>` : '');
+    const miembros = d.miembros.map((m) => {
+      const partido = m.partido_politico && m.grupo_parlamentario && DianaFiltro(m.partido_politico)?.test(m.grupo_parlamentario) ? '' : m.partido_politico;
+      return `<article class="com-m">
+        ${m.foto ? `<img src="${esc(m.foto)}" alt="" loading="lazy" data-ini="${esc(iniciales(m.nombre))}">`
+                 : `<div class="com-sinfoto">${esc(iniciales(m.nombre))}</div>`}
+        <div style="min-width:0">
+          <p class="com-m-nombre">${m.perfil ? `<a href="${esc(m.perfil)}" target="_blank" rel="noopener" title="Ver ficha oficial">${esc(m.nombre)}</a>` : esc(m.nombre)}</p>
+          ${m.cargo ? `<span class="com-m-cargo${MESA.test(m.cargo) ? ' is-mesa' : ''}">${esc(m.cargo)}</span>` : ''}
+          ${m.camara && d.camara === 'Congreso' ? `<span class="agenda-cam ${claseCamara(m.camara)}">${esc(camaraCorta(m.camara))}</span>` : ''}
+          <dl class="com-m-datos">
+            ${dato('Grupo', m.grupo_parlamentario)}
+            ${dato('Partido', partido)}
+            ${dato('Representa', m.representa_a)}
+            ${m.condicion && !/ejercicio/i.test(m.condicion) ? dato('Condición', m.condicion) : ''}
+            ${dato('Votos', m.votacion)}
+            ${m.email ? `<dt>Correo</dt><dd class="com-mail"><a href="mailto:${esc(m.email)}">${esc(m.email)}</a><button class="com-copiar" data-copiar="${esc(m.email)}" title="Copiar correo">Copiar</button></dd>` : ''}
+            ${otrasComisiones(m, d)}
+          </dl>
+        </div>
+      </article>`;
+    }).join('');
+    const sesiones = d.proximas_sesiones.length
+      ? d.proximas_sesiones.map((s) => `<div class="lista-item" style="cursor:default">
+          <span class="lista-cuando">${esc(s.fecha)}<small>${esc(fmtHora(s.hora))}</small></span>
+          <span class="lista-texto"><span class="t">${esc(s.tema || s.organiza)}</span>
+          <span class="m">${esc([s.estado, s.lugar].filter(Boolean).join(' · ') || ' ')}</span></span>
+          ${s.documento ? `<a class="d-btn d-btn--sm" href="${esc(s.documento)}" target="_blank" rel="noopener">Agenda (PDF)</a>` : s.enlace ? `<a class="d-btn d-btn--sm" href="${esc(s.enlace)}" target="_blank" rel="noopener">Ver</a>` : '<span></span>'}
+        </div>`).join('')
+      : '<p class="d-hint" style="padding:12px 16px;margin:0">No hay sesiones convocadas en los próximos 14 días en la agenda ni en el Visor de Sesiones.</p>';
+    el.innerHTML = `
+      <div class="com-cab">
+        ${d.camara !== 'Congreso' ? `<span class="agenda-cam ${claseCamara(d.camara)}">${esc(d.camara)}</span>` : ''}
+        <h2>${esc(d.nombre)}</h2>
+        <div class="agenda-meta">
+          ${d.tipo ? `<span>Comisión ${esc(d.tipo)}</span>` : ''}
+          ${d.periodo_anual ? `<span>Periodo anual ${esc(d.periodo_anual)}</span>` : ''}
+          <span>${d.total} integrantes</span>
+        </div>
+      </div>
+      <div class="com-acciones">
+        <a class="d-btn d-btn--sm" href="${esc(d.fuente)}" target="_blank" rel="noopener">Página oficial</a>
+        ${d.visor_sesiones && d.camara !== 'Congreso' ? `<a class="d-btn d-btn--sm" href="${esc(d.visor_sesiones)}" target="_blank" rel="noopener">Visor de sesiones</a>` : ''}
+        <button class="d-btn d-btn--sm" id="com-copiar-todos">Copiar todos los correos</button>
+        <button class="d-btn d-btn--sm d-btn--primary" id="com-preguntar">Preguntar a Diana sobre esta comisión</button>
+      </div>
+      ${d.aviso ? `<p class="d-hint">${esc(d.aviso)}</p>` : ''}
+      ${d.por_grupo.length ? `<section class="com-bloque"><h3>Composición por grupo parlamentario</h3><div class="com-barra">${barra}</div><div class="com-leyenda">${leyenda}</div></section>` : ''}
+      <section class="com-bloque d-card"><div class="d-card-head"><h3 class="d-card-title">Próximas sesiones</h3></div><div class="lista">${sesiones}</div></section>
+      <section class="com-bloque"><h3>Integrantes</h3><div class="com-miembros">${miembros}</div></section>
+      <p class="agenda-fuente">Fuente: ${esc(d.fuente)} y la ficha oficial de cada integrante.</p>`;
+    $('com-copiar-todos').addEventListener('click', (e) =>
+      copiarTexto(d.miembros.map((m) => m.email).filter(Boolean).join('; '), e.currentTarget, 'Correos copiados'));
+    $('com-preguntar').addEventListener('click', () => {
+      if (streaming) return;
+      irA('diana');
+      newChat();
+      send(`¿Qué está trabajando la ${d.nombre} (${d.camara})? Proyectos en su cartera, próximas sesiones y quiénes la integran.`);
+    });
+  }
+
+  function otrasComisiones(m, d) {
+    const p = comIntegrantes?.find((x) => (m.perfil && x.perfil === m.perfil) || x.nombre === m.nombre);
+    const otras = (p?.comisiones || []).filter((c) => c.url !== d.fuente);
+    if (!otras.length) return '';
+    return `<dt>También</dt><dd>${otras.map((c) => `<a href="#" class="com-ir com-otra" data-url="${esc(c.url)}" title="${esc(c.nombre)}">${esc(nombreCorto(c.nombre))}</a>`).join(', ')}</dd>`;
+  }
+
+  async function copiarTexto(texto, boton, ok = 'Copiado') {
+    try {
+      await navigator.clipboard.writeText(texto);
+      const antes = boton.textContent;
+      boton.textContent = ok;
+      setTimeout(() => { boton.textContent = antes; }, 1500);
+    } catch { /* sin portapapeles */ }
+  }
+
+  $('com-lista').addEventListener('click', (e) => {
+    const b = e.target.closest('.com-item');
+    if (!b) return;
+    if (b.dataset.persona) pintarPersona(comIntegrantes[Number(b.dataset.persona)]);
+    else abrirComision(b.dataset.url);
+  });
+
+  // Un legislador y todas sus comisiones.
+  function pintarPersona(p) {
+    comActual = null;
+    pintarListaComisiones();
+    const iniciales = String(p.nombre).split(',')[0].split(' ').slice(0, 2).map((x) => x[0]).join('');
+    $('com-detalle').innerHTML = `
+      <div class="com-cab"><span class="agenda-cam ${claseCamara(p.camara)}">${esc(p.camara)}</span></div>
+      <article class="com-m" style="max-width:640px;margin-top:10px">
+        ${p.foto ? `<img src="${esc(p.foto)}" alt="" data-ini="${esc(iniciales)}">` : `<div class="com-sinfoto">${esc(iniciales)}</div>`}
+        <div>
+          <p class="com-m-nombre" style="font-size:16px">${p.perfil ? `<a href="${esc(p.perfil)}" target="_blank" rel="noopener">${esc(p.nombre)}</a>` : esc(p.nombre)}</p>
+          <dl class="com-m-datos">
+            ${p.grupo_parlamentario ? `<dt>Grupo</dt><dd>${esc(p.grupo_parlamentario)}</dd>` : ''}
+            ${p.email ? `<dt>Correo</dt><dd class="com-mail"><a href="mailto:${esc(p.email)}">${esc(p.email)}</a><button class="com-copiar" data-copiar="${esc(p.email)}">Copiar</button></dd>` : ''}
+          </dl>
+        </div>
+      </article>
+      <section class="com-bloque d-card" style="margin-top:16px">
+        <div class="d-card-head"><h3 class="d-card-title">Integra ${p.comisiones.length} comisi${p.comisiones.length === 1 ? 'ón' : 'ones'}</h3></div>
+        <div class="lista">${p.comisiones.map((c) => `<button class="lista-item com-ir" data-url="${esc(c.url)}">
+          <span class="lista-cuando">${esc(c.cargo || '—')}</span>
+          <span class="lista-texto"><span class="t">${esc(c.nombre)}</span><span class="m">${esc(c.camara)}</span></span><span></span></button>`).join('')}</div>
+      </section>`;
+  }
+  $('com-detalle').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-copiar]');
+    if (b) { copiarTexto(b.dataset.copiar, b, 'Copiado'); return; }
+    const ir = e.target.closest('.com-ir');
+    if (ir) { e.preventDefault(); abrirComision(ir.dataset.url); }
+  });
+  $('com-filtro').addEventListener('input', () => pintarListaComisiones());
+  // Foto que no carga → iniciales.
+  $('com-detalle').addEventListener('error', (e) => {
+    const img = e.target;
+    if (img.tagName !== 'IMG' || !img.dataset.ini) return;
+    const div = document.createElement('div');
+    div.className = 'com-sinfoto';
+    div.textContent = img.dataset.ini;
+    img.replaceWith(div);
+  }, true);
+  alEntrar.comisiones = () => cargarComisiones();
 
   // ── Reloj de Lima (GMT-5) en la barra superior ──
   // Siempre la hora de Lima, aunque la Mac esté en otro huso: las agendas y

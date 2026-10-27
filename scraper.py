@@ -2989,9 +2989,15 @@ def _parsear_tabla_miembros(html: str) -> list[dict]:
             fila_dict = {}
             for enc, td in zip(encabezados, celdas):
                 texto = " ".join(td.get_text(" ", strip=True).split())
-                if "APELLIDOS" in enc:
+                if "FOTO" in enc:
+                    img = td.find("img")
+                    if img and url_permitida(img.get("src") or ""):
+                        fila_dict["foto"] = img["src"]
+                elif "APELLIDOS" in enc:
                     fila_dict["nombre"] = texto
                     enlace = td.find("a", href=True)
+                    if enlace and url_permitida(enlace["href"]):
+                        fila_dict["perfil"] = enlace["href"]
                     host = urllib.parse.urlparse(enlace["href"]).hostname if enlace else ""
                     if host and host.startswith("senado."):
                         fila_dict["camara"] = "Senado"
@@ -3166,6 +3172,221 @@ async def fetch_comisiones(camara: str = None):
             "(\"paginas_de_comisiones\"). Para la lista de una comisión puntual "
             "existe la herramienta fetch_miembros_comision."
         ),
+    }
+
+
+# ── Comisiones para la pantalla "Comisiones" de la app ─────────
+#
+# Lo mismo que lee el chat, más la ficha de cada integrante (su página de
+# perfil en el portal de su cámara): partido político, región que
+# representa, condición, votación obtenida y periodo. Verificado el
+# 27/10/2026 en diputados.congreso.gob.pe/diputado/… y senado…/senador/….
+
+_FICHA_CAMPOS = {
+    "PARTIDO POLITICO": "partido_politico",
+    "PERIODO DE FUNCIONES": "periodo",
+    "GRUPO PARLAMENTARIO": "grupo_parlamentario",
+    "REPRESENTA A": "representa_a",
+    "CONDICION": "condicion",
+    "VOTACION OBTENIDA": "votacion",
+    "CORREO INSTITUCIONAL": "email",
+}
+_CACHE_FICHAS: dict[str, tuple[float, dict]] = {}
+_TTL_FICHAS = 12 * 3600          # una ficha cambia muy de vez en cuando
+_PERIODO_ANUAL_RE = re.compile(r"PERIODO ANUAL DE SESIONES\s+(\d{4}\s*-\s*\d{4})", re.IGNORECASE)
+
+
+def _parsear_ficha(html: str) -> dict:
+    """Etiqueta → valor de la ficha de un diputado o senador."""
+    soup = BeautifulSoup(html, "html.parser")
+    for x in soup(["header", "footer", "nav", "script", "style"]):
+        x.decompose()
+    lineas = [l.strip() for l in soup.get_text("\n", strip=True).split("\n") if l.strip()]
+    ficha = {}
+    for i, linea in enumerate(lineas[:-1]):
+        campo = _FICHA_CAMPOS.get(_sin_acentos(linea).rstrip(":"))
+        if campo and campo not in ficha:
+            valor = lineas[i + 1]
+            # "No registrado/a": la fuente no tiene el dato; mejor no mostrarlo.
+            if (_sin_acentos(valor).rstrip(":") not in _FICHA_CAMPOS
+                    and not _sin_acentos(valor).startswith("NO REGISTRAD")):
+                ficha[campo] = valor
+    return ficha
+
+
+async def _ficha(c, url: str) -> dict:
+    hit = _CACHE_FICHAS.get(url)
+    if hit and time.time() - hit[0] < _TTL_FICHAS:
+        return hit[1]
+    try:
+        r = await _get_oficial(c, url)
+        ficha = _parsear_ficha(r.text) if r is not None and r.status_code == 200 else {}
+    except Exception as _e:
+        logger.info("ficha %s: %s", url, _e)
+        return {}
+    if ficha:
+        _CACHE_FICHAS[url] = (time.time(), ficha)
+    return ficha
+
+
+def _tipo_comision(camara: str, nombre: str) -> str:
+    cuadro = COMISIONES_SENADO if camara == "Senado" else COMISIONES_DIPUTADOS
+    claves = _palabras_clave(nombre)
+    for tipo, lista in (("legislativa", cuadro["legislativas"]),
+                        ("no legislativa", cuadro["no_legislativas"])):
+        for oficial in lista:
+            k = _palabras_clave(oficial)
+            if k and len(claves & k) >= max(1, int(len(k) * 0.6)):
+                return tipo
+    return ""
+
+
+async def fetch_comisiones_app():
+    """Listado para la pantalla Comisiones: cada comisión con su cámara, tipo y página."""
+    async with _client() as c:
+        indices = await _indices_comisiones(c, list(COMISIONES_INDICE))
+    camaras = []
+    for camara, indice in indices.items():
+        camaras.append({
+            "camara": camara,
+            "comisiones": [{"nombre": n, "url": u, "tipo": _tipo_comision(camara, n)}
+                           for n, u in indice.items()],
+            **({} if indice else {"error": f"No se pudo leer el índice de comisiones de {camara}."}),
+        })
+    return {
+        "fuente": "Portales del Senado y de la Cámara de Diputados",
+        "camaras": camaras,
+        "comision_permanente": {"nombre": "Comisión Permanente", "url": COMISION_PERMANENTE_URL,
+                                "descripcion": COMISION_PERMANENTE["descripcion"]},
+        "enlaces_oficiales": {**COMISIONES_ENLACES["senado"], **COMISIONES_ENLACES["diputados"],
+                              **COMISIONES_ENLACES["comunes"]},
+    }
+
+
+_CACHE_INTEGRANTES: tuple[float, dict] | None = None
+
+
+async def fetch_integrantes_todas():
+    """
+    Quién integra qué comisión, en todas las comisiones de las dos cámaras y
+    la Comisión Permanente (solo la tabla de cada página, sin las fichas:
+    ~30 pedidos en paralelo). Sirve para buscar a un legislador y ver todas
+    sus comisiones.
+    """
+    global _CACHE_INTEGRANTES
+    if _CACHE_INTEGRANTES and time.time() - _CACHE_INTEGRANTES[0] < _TTL_FICHAS:
+        return _CACHE_INTEGRANTES[1]
+    async with _client() as c:
+        indices = await _indices_comisiones(c, list(COMISIONES_INDICE))
+        paginas = [(cam, n, u) for cam, ind in indices.items() for n, u in ind.items()]
+        paginas.append(("Congreso", "Comisión Permanente", COMISION_PERMANENTE_URL))
+        sem = asyncio.Semaphore(8)
+
+        async def una(cam, nombre, url):
+            async with sem:
+                try:
+                    r = await _get_oficial(c, url)
+                    return cam, nombre, url, (_parsear_tabla_miembros(r.text)
+                                              if r is not None and r.status_code == 200 else None)
+                except Exception as _e:
+                    logger.info("integrantes %s: %s", url, _e)
+                    return cam, nombre, url, None
+        resultados = await asyncio.gather(*(una(*p) for p in paginas))
+
+    personas: dict[str, dict] = {}
+    fallidas = []
+    for cam, nombre, url, miembros in resultados:
+        if miembros is None:
+            fallidas.append(nombre)
+            continue
+        for m in miembros:
+            clave = m.get("perfil") or _sin_acentos(m["nombre"])
+            p = personas.setdefault(clave, {"nombre": m["nombre"], "perfil": m.get("perfil", ""),
+                                            "foto": m.get("foto", ""), "email": m.get("email", ""),
+                                            "grupo_parlamentario": m.get("grupo_parlamentario", ""),
+                                            "camara": m.get("camara") or cam, "comisiones": []})
+            p["comisiones"].append({"nombre": nombre, "url": url, "camara": cam,
+                                    "cargo": m.get("cargo", "")})
+    resultado = {"integrantes": sorted(personas.values(), key=lambda p: _sin_acentos(p["nombre"])),
+                 "total": len(personas),
+                 **({"no_leidas": fallidas} if fallidas else {})}
+    if not fallidas:
+        _CACHE_INTEGRANTES = (time.time(), resultado)
+    return resultado
+
+
+def _es_de_esta_comision(sesion: dict, nombre: str) -> bool:
+    claves = _palabras_clave(nombre)
+    texto = _palabras_clave(sesion.get("tema", "") + " " + sesion.get("organiza", ""))
+    return bool(claves) and len(claves & texto) >= max(1, round(len(claves) * 0.7))
+
+
+async def fetch_comision_detalle(url: str):
+    """
+    Una comisión: integrantes con su ficha (partido, región, condición,
+    votación, correo), periodo anual y próximas sesiones (14 días).
+    Solo páginas del índice oficial o la de la Comisión Permanente.
+    """
+    permanente = url.rstrip("/") == COMISION_PERMANENTE_URL.rstrip("/")
+    async with _client() as c:
+        if permanente:
+            camara, nombre = "Congreso", "Comisión Permanente"
+        else:
+            indices = await _indices_comisiones(c, list(COMISIONES_INDICE))
+            hallada = next(((cam, n) for cam, ind in indices.items()
+                            for n, u in ind.items() if u.rstrip("/") == url.rstrip("/")), None)
+            if not hallada:
+                return {"error": "Esa página no está en el índice oficial de comisiones."}
+            camara, nombre = hallada
+        try:
+            r = await _get_oficial(c, url)
+            html = r.text if r is not None and r.status_code == 200 else ""
+        except Exception as _e:
+            logger.warning("comisión %s: %s", url, _e)
+            html = ""
+        if not html:
+            return {"error": f"No respondió la página oficial de la comisión ({url})."}
+        miembros = _parsear_tabla_miembros(html)
+        periodo = _PERIODO_ANUAL_RE.search(BeautifulSoup(html, "html.parser").get_text(" "))
+
+        sem = asyncio.Semaphore(8)
+
+        async def con_ficha(m):
+            if not m.get("perfil"):
+                return m
+            async with sem:
+                ficha = await _ficha(c, m["perfil"])
+            return {**ficha, **{k: v for k, v in m.items() if v}}
+        miembros = await asyncio.gather(*(con_ficha(m) for m in miembros))
+
+    for m in miembros:
+        if camara != "Congreso":
+            m.setdefault("camara", camara)
+
+    sesiones = []
+    try:
+        filtro = {"Senado": "senado", "Cámara de Diputados": "diputados"}.get(camara)
+        agenda = await fetch_agenda_camaras(dias=14, camara=filtro) if filtro else {}
+        sesiones = [x for x in agenda.get("sesiones") or [] if _es_de_esta_comision(x, nombre)]
+    except Exception as _e:
+        logger.info("próximas sesiones de %s: %s", nombre, _e)
+
+    grupos: dict[str, int] = {}
+    for m in miembros:
+        g = m.get("grupo_parlamentario") or "Sin grupo"
+        grupos[g] = grupos.get(g, 0) + 1
+    return {
+        "fuente": url,
+        "camara": camara,
+        "nombre": nombre,
+        "tipo": "" if permanente else _tipo_comision(camara, nombre),
+        "periodo_anual": periodo.group(1).replace(" ", "") if periodo else "",
+        "miembros": miembros,
+        "total": len(miembros),
+        "por_grupo": sorted(grupos.items(), key=lambda kv: -kv[1]),
+        "proximas_sesiones": sesiones,
+        "visor_sesiones": VISOR_SESIONES_WEB + {"Senado": "s", "Cámara de Diputados": "d"}.get(camara, ""),
+        **({} if miembros else {"aviso": "La página oficial no trae la tabla de integrantes."}),
     }
 
 

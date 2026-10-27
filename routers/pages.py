@@ -7,7 +7,14 @@ from fastapi import APIRouter, Query
 from fastapi.responses import HTMLResponse
 
 from config import LLM_API_KEY, ahora_lima, static_file
-from scraper import fetch_agenda_camaras, fetch_destacados, fetch_proyectos
+from scraper import (
+    fetch_agenda_camaras,
+    fetch_comision_detalle,
+    fetch_comisiones_app,
+    fetch_destacados,
+    fetch_integrantes_todas,
+    fetch_proyectos,
+)
 from services import sse
 from services.agenda_formato import partes as partes_agenda
 
@@ -227,3 +234,34 @@ async def agenda(dias: int = Query(14, ge=1, le=31)):
                 "actualizado": ahora_lima().strftime("%d/%m/%Y %H:%M"),
                 "sesiones": _con_partes(_sesiones_ordenadas(r, solo_futuras=False))}
     return await _cacheado(f"agenda:{dias}", producir)
+
+
+# ── Comisiones ─────────────────────────────────────────────────
+
+@router.get("/comisiones")
+async def comisiones():
+    async def producir():
+        try:
+            return await fetch_comisiones_app()
+        except Exception as e:
+            return {"error": f"No se pudo consultar las comisiones: {type(e).__name__}"}
+    return await _cacheado("comisiones", producir)
+
+
+@router.get("/comisiones/detalle")
+async def comision_detalle(url: str = Query(..., min_length=10, max_length=300)):
+    async def producir():
+        try:
+            return await fetch_comision_detalle(url)
+        except Exception as e:
+            return {"error": f"No se pudo consultar la comisión: {type(e).__name__}"}
+    return await _cacheado(f"comision:{url}", producir)
+
+
+@router.get("/comisiones/integrantes")
+async def comisiones_integrantes():
+    """Todos los integrantes de todas las comisiones (para buscar a un legislador)."""
+    try:
+        return await fetch_integrantes_todas()
+    except Exception as e:
+        return {"error": f"No se pudo consultar los integrantes: {type(e).__name__}"}

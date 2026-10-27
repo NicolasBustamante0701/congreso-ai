@@ -488,3 +488,53 @@ html, body { height: 100%; overflow: hidden; }
 .reloj-hora { font: 650 14px var(--d-font); font-variant-numeric: tabular-nums; color: var(--d-text); }
 .reloj-zona { font-size: 11px; color: var(--d-text-3); }
 @media (max-width: 760px) { .reloj-zona { display: none; } }
+
+/* ── Comisiones ───────────────────────────────────────────── */
+.view-comisiones { overflow: hidden; }
+.com { display: grid; grid-template-columns: 300px 1fr; gap: 22px; height: 100%; min-height: 0; max-width: 1280px; margin: 0 auto; padding: 22px 28px 0; box-sizing: border-box; }
+.com-lado { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+.com-lado .d-input { height: 32px; font-size: 13px; }
+.com-lista { overflow-y: auto; min-height: 0; padding-right: 2px; }
+.com-grupo-t { margin: 14px 4px 6px; font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--d-text-3); }
+.com-grupo-t:first-child { margin-top: 2px; }
+.com-item { display: block; width: 100%; text-align: left; padding: 8px 10px; border: 0; border-radius: 8px; background: none; color: var(--d-text); font: 550 13px/1.35 var(--d-font); cursor: pointer; }
+.com-item:hover { background: var(--d-hover); }
+.com-item.is-on { background: var(--d-accent-soft); color: var(--d-accent); }
+.com-item small { display: block; margin-top: 2px; font-weight: 500; font-size: 11.5px; color: var(--d-text-3); }
+.com-item mark { background: var(--d-warn-soft); color: inherit; border-radius: 3px; }
+.com-detalle { overflow-y: auto; min-height: 0; padding-bottom: 24px; }
+.com-vacio { margin: 40px auto; max-width: 420px; text-align: center; color: var(--d-text-3); font-size: 13px; line-height: 1.5; }
+.com-cab h2 { margin: 6px 0 4px; font: 700 var(--d-fs-xl)/1.25 var(--d-font-display); }
+.com-cab .agenda-meta { margin-top: 4px; }
+.com-acciones { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 18px; }
+.com-acciones a.d-btn { text-decoration: none; }
+.com-bloque { margin-bottom: 18px; }
+.com-bloque h3 { margin: 0 0 8px; font: 700 14px var(--d-font-display); }
+.com-barra { display: flex; height: 10px; border-radius: 999px; overflow: hidden; background: var(--d-surface-2); }
+.com-barra span { display: block; height: 100%; }
+.com-leyenda { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 8px; font-size: 12px; color: var(--d-text-2); }
+.com-leyenda i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+.com-miembros { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 10px; }
+.com-m { display: grid; grid-template-columns: 52px 1fr; gap: 12px; padding: 12px; border: 1px solid var(--d-line); border-radius: 10px; background: var(--d-surface); }
+.com-m img, .com-m .com-sinfoto { width: 52px; height: 52px; border-radius: 50%; object-fit: cover; object-position: top; background: var(--d-surface-2); }
+.com-sinfoto { display: grid; place-items: center; font: 700 15px var(--d-font); color: var(--d-text-3); }
+.com-m-nombre { margin: 0; font: 650 13.5px/1.3 var(--d-font-display); color: var(--d-accent); }
+.com-m-nombre a { color: inherit; text-decoration: none; }
+.com-m-nombre a:hover { text-decoration: underline; }
+.com-m-cargo { display: inline-block; margin-top: 3px; padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 650; background: var(--d-surface-2); color: var(--d-text-2); }
+.com-m-cargo.is-mesa { background: var(--d-accent-soft); color: var(--d-accent); }
+.com-m-datos { margin: 6px 0 0; display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; font-size: 12px; line-height: 1.4; }
+.com-m-datos dt { color: var(--d-text-3); }
+.com-m-datos dd { margin: 0; color: var(--d-text-2); min-width: 0; overflow-wrap: anywhere; }
+.com-mail { display: inline-flex; align-items: center; gap: 6px; }
+.com-mail a { color: var(--d-info); text-decoration: none; }
+.com-mail a:hover { text-decoration: underline; }
+.com-otra { color: var(--d-text-2); text-decoration: underline; text-decoration-color: var(--d-line-strong); }
+.com-otra:hover { color: var(--d-accent); }
+.com-copiar { border: 0; background: none; padding: 0 2px; font-size: 11px; color: var(--d-text-3); cursor: pointer; }
+.com-copiar:hover { color: var(--d-accent); }
+@media (max-width: 860px) {
+  .view-comisiones { overflow: auto; }
+  .com { grid-template-columns: 1fr; height: auto; }
+  .com-lista { max-height: 240px; }
+}

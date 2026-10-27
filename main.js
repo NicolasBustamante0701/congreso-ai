@@ -457,12 +457,14 @@ function esUrlPropia(raw) {
   } catch { return false; }
 }
 
-// Solo http/https van al navegador del sistema: file:, javascript:, smb:…
+// Solo http/https van al navegador del sistema (y mailto: al correo): file:, javascript:, smb:…
 // que pudieran venir en un enlace raspado no se abren.
 function abrirAfuera(raw) {
   try {
     const u = new URL(raw);
     if ((u.protocol === 'https:' || u.protocol === 'http:') && !esUrlPropia(raw)) shell.openExternal(u.href);
+    // Correos de los integrantes de comisiones: se abren en el cliente de correo.
+    else if (u.protocol === 'mailto:' && /^mailto:[^@\s]+@[^@\s]+$/.test(u.href.split('?')[0])) shell.openExternal(u.href);
   } catch { /* URL inválida: se ignora */ }
 }
 
