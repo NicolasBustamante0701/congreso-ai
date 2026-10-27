@@ -381,3 +381,40 @@ async def test_destacados_vacio_vs_html_cambiado(monkeypatch, html, falla):
     else:
         r = await scraper._scrape_destacados_camara("https://diputados.congreso.gob.pe/")
         assert r["destacados"] == [] and r["citaciones"] == []
+
+
+# ── Visor de Sesiones: convocatorias que no están en la agenda ──
+
+def _agenda(fecha, camara, organiza, tema="Sesión ordinaria"):
+    return {"fecha": fecha, "hora": "3:00 PM", "tema": tema, "organiza": organiza,
+            "lugar": "Sala 1", "camara": camara, "es_comision": True, "enlace": "https://x/"}
+
+
+def test_sesion_visor_formato():
+    from scraper import _sesion_visor
+    s = _sesion_visor({"estado": "Convocada", "fecha": "30/10/2026", "horaInicio": "10:00AM",
+                       "nombreSesion": "TERCERA SESIÓN", "nombreComision": "Ética Parlamentaria",
+                       "caracteristicas": "Descentralizada"}, "S")
+    assert s["hora"] == "10:00 AM" and s["camara"] == "Senado"
+    assert s["tema"] == "TERCERA SESIÓN (Descentralizada)"
+    assert s["enlace"].endswith("#/s") and s["estado"] == "Convocada"
+
+
+def test_unir_visor_agrega_las_que_faltan_y_no_duplica():
+    from scraper import _sesion_visor, _unir_visor
+    agenda = [_agenda("27/10/2026", "Cámara de Diputados",
+                      "Comisión de Desarrollo Agrario Presidente: Diputado X")]
+    visor = [
+        _sesion_visor({"fecha": "27/10/2026", "horaInicio": "3:00PM", "estado": "Convocada",
+                       "nombreComision": "Desarrollo Agrario"}, "D"),
+        _sesion_visor({"fecha": "27/10/2026", "horaInicio": "9:00AM", "estado": "Convocada",
+                       "nombreComision": "Energía y Minas"}, "D"),
+        # Misma comisión pero del Senado: es otra sesión.
+        _sesion_visor({"fecha": "27/10/2026", "horaInicio": "4:00PM", "estado": "Convocada",
+                       "nombreComision": "Desarrollo Agrario"}, "S"),
+    ]
+    todas = _unir_visor(agenda, visor)
+    assert len(todas) == 3
+    assert todas[0]["organiza"] == "Comisión Energía y Minas"      # ordenadas por hora
+    assert todas[1]["lugar"] == "Sala 1" and todas[1]["estado"] == "Convocada"
+    assert todas[2]["camara"] == "Senado"

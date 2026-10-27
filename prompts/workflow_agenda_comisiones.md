@@ -10,6 +10,7 @@ Si hay datos reales:
 
 - **Cámara**: el campo `camara` de cada sesión. Una comisión con el mismo nombre existe en las dos cámaras (Constitución, Justicia…): sin la cámara el dato no sirve.
 - **Lugar**: el campo `lugar` tal cual. Pon "—" solo si vino vacío.
-- **Link**: si la sesión trae `documento`, es el PDF con la agenda de esa sesión: va primero. `enlace` es la página del día. Solo links que la herramienta devolvió — jamás construyas una URL.
+- **Link**: si la sesión trae `documento`, es el PDF con la agenda de esa sesión: va primero. `enlace` es la página del día; si la sesión trae `fuente: "Visor de Sesiones de Comisiones"`, el `enlace` es el Visor de Sesiones de esa cámara: escríbelo como [Visor de sesiones](`enlace`). Solo links que la herramienta devolvió — jamás construyas una URL.
+- **Fuentes**: los datos combinan la Agenda del Congreso y el Visor de Sesiones de Diputados y Senado (no todo se sube a la agenda). Muestra TODAS. Si una sesión trae `estado` distinto de "Convocada" (ej. Suspendida, Realizada), agrégalo al tema. Si el resultado trae `aviso_fuentes`, dilo al final.
 
 Ordena por fecha y hora. Si un día consultado no tiene sesiones y hay `avisos` (ej. "Semana de Representación del 12 al 16 de octubre"), dilo: explica por qué no hay sesiones. Cierra con criterio: qué sesión conviene seguir.

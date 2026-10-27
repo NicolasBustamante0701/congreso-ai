@@ -1909,11 +1909,13 @@ async def fetch_agenda_comisiones(dias: int = 2, comision: str = None):
                            + " en los próximos días."}
 
     resultado = {
-        "fuente": ("Agenda del Congreso (comunicaciones.congreso.gob.pe/agenda) y "
-                   "Síntesis de Agendas del Departamento de Comisiones"),
+        "fuente": ("Agenda del Congreso (comunicaciones.congreso.gob.pe/agenda), Visor de "
+                   "Sesiones de Comisiones de Diputados y Senado y Síntesis de Agendas "
+                   "del Departamento de Comisiones"),
         "dias_consultados": dias,
         "sesiones": sesiones,
         "total_sesiones": len(sesiones),
+        **({"aviso_fuentes": agenda["aviso_fuentes"]} if agenda.get("aviso_fuentes") else {}),
         "instruccion": ("Lista TODAS las sesiones de \"sesiones\" (cada una trae su "
                         "\"enlace\" a la agenda del día) y, si hay \"sintesis\", las "
                         "que estas no repitan. Extrae SOLO las de los días consultados."),
@@ -2508,6 +2510,111 @@ async def fetch_interpelaciones(ministro: str = None):
 
 AGENDA_COMUNICACIONES = "https://comunicaciones.congreso.gob.pe/agenda"
 
+# Visor de Sesiones de Comisiones (wb2server.congreso.gob.pe/visor-sesiones/#/d
+# y #/s). Las comisiones registran ahí sus convocatorias apenas las emiten, y
+# muchas nunca llegan a la agenda de comunicaciones: el 27/10/2026 la agenda
+# traía 2 sesiones de comisión y el visor 7+ solo en Diputados. Es la misma
+# consulta pública que hace la página del visor, con el header Basic fijo que
+# viene en su código público (autorizado por el usuario el 26/10/2026).
+VISOR_SESIONES_API = "https://wb2server.congreso.gob.pe/service-portal-publico-ext/sesiones/busqueda"
+VISOR_SESIONES_WEB = "https://wb2server.congreso.gob.pe/visor-sesiones/#/"
+_VISOR_AUTH = {"Authorization": "Basic " + base64.b64encode(b"userNamePortal:passwordPortal").decode()}
+_VISOR_CAMARAS = {"D": "Cámara de Diputados", "S": "Senado"}
+_PALABRAS_VACIAS = {"COMISION", "DE", "DEL", "LA", "LAS", "LOS", "Y", "EN", "E",
+                    "ASUNTOS", "PARA", "EL", "SOBRE"}
+
+
+def _hora_visor(hora: str) -> str:
+    """'3:00PM' → '3:00 PM', el formato de la agenda de comunicaciones."""
+    m = re.match(r"^\s*(\d{1,2}:\d{2})\s*([AP]M)\s*$", (hora or "").upper())
+    return f"{m.group(1)} {m.group(2)}" if m else (hora or "").strip()
+
+
+def _sesion_visor(item: dict, codigo: str) -> dict | None:
+    fecha = (item.get("fecha") or "").strip()
+    comision = (item.get("nombreComision") or "").strip()
+    if not fecha or not comision:
+        return None
+    tema = (item.get("nombreSesion") or "").strip()
+    extras = (item.get("caracteristicas") or "").strip()
+    if extras:
+        tema = f"{tema} ({extras})"
+    return {
+        "fecha": fecha,
+        "hora": _hora_visor(item.get("horaInicio", "")),
+        "tema": tema,
+        "organiza": f"Comisión {comision}",
+        "lugar": "",
+        "camara": _VISOR_CAMARAS[codigo],
+        "es_comision": True,
+        "estado": (item.get("estado") or "").strip(),
+        "enlace": VISOR_SESIONES_WEB + codigo.lower(),
+        "fuente": "Visor de Sesiones de Comisiones",
+    }
+
+
+async def _sesiones_visor(c, desde: date, hasta: date) -> tuple[list[dict], list[str]]:
+    """Sesiones de comisión de Diputados y Senado en [desde, hasta], y las cámaras que fallaron."""
+    async def _camara(codigo):
+        params = {"codigoTipoParlamento": codigo, "periodoParlamentario": "",
+                  "periodoLegislativo": "", "tipoComision": "", "comision": "",
+                  "sesion": "", "descentralizada": "", "conjunta": "", "continuada": "",
+                  "fechaInicio": desde.isoformat(), "fechaFin": hasta.isoformat(), "fecha": ""}
+        try:
+            r = await c.get(VISOR_SESIONES_API, params=params, headers={**HEADERS, **_VISOR_AUTH})
+            r.raise_for_status()
+            items = r.json().get("result") or []
+        except Exception as _e:
+            logger.warning("visor sesiones %s: %s: %s", codigo, type(_e).__name__, _e)
+            return codigo, None
+        return codigo, [s for s in (_sesion_visor(i, codigo) for i in items) if s]
+
+    sesiones, fallas = [], []
+    for codigo, lista in await asyncio.gather(*[_camara(k) for k in _VISOR_CAMARAS]):
+        if lista is None:
+            fallas.append(_VISOR_CAMARAS[codigo])
+        else:
+            sesiones.extend(lista)
+    return sesiones, fallas
+
+
+def _misma_sesion(visor: dict, agenda: dict) -> bool:
+    """La sesión del visor ya está en la agenda de comunicaciones (mismo día, cámara y comisión)."""
+    if visor["fecha"] != agenda["fecha"]:
+        return False
+    if agenda["camara"] in ("Senado", "Cámara de Diputados") and agenda["camara"] != visor["camara"]:
+        return False
+    claves = [p for p in re.findall(r"[A-Z]+", _sin_acentos(visor["organiza"]))
+              if p not in _PALABRAS_VACIAS and len(p) > 2]
+    texto = _sin_acentos(agenda["tema"] + " " + agenda["organiza"])
+    return bool(claves) and all(p in texto for p in claves)
+
+
+def _unir_visor(agenda: list[dict], visor: list[dict]) -> list[dict]:
+    """Suma a la agenda las convocatorias del visor que no traía. Ante un duplicado
+    queda la de la agenda (trae lugar y PDF), con el estado del visor."""
+    nuevas = []
+    for v in visor:
+        igual = next((a for a in agenda if a["es_comision"] and _misma_sesion(v, a)), None)
+        if igual is not None:
+            if v.get("estado"):
+                igual.setdefault("estado", v["estado"])
+        else:
+            nuevas.append(v)
+
+    def _orden(s):
+        try:
+            f = datetime.strptime(s["fecha"], "%d/%m/%Y")
+        except ValueError:
+            return (datetime.max, 0)
+        try:
+            h = datetime.strptime(s["hora"].upper().replace(" ", ""), "%I:%M%p")
+            return (f, h.hour * 60 + h.minute)
+        except ValueError:
+            return (f, 24 * 60)
+    return sorted(agenda + nuevas, key=_orden)
+
+
 async def fetch_agenda_camaras(dias: int = 2, camara: str = None):
     """
     Obtiene la agenda parlamentaria bicameral desde comunicaciones.congreso.gob.pe/agenda.
@@ -2536,11 +2643,15 @@ async def fetch_agenda_camaras(dias: int = 2, camara: str = None):
             return [], []
 
     async with _client() as c:
-        resultados = await asyncio.gather(
-            *[_un_dia(c, today + timedelta(days=delta)) for delta in range(dias)]
+        resultados, (visor, fallas_visor) = await asyncio.gather(
+            asyncio.gather(*[_un_dia(c, today + timedelta(days=delta)) for delta in range(dias)]),
+            _sesiones_visor(c, today, today + timedelta(days=max(dias, 1) - 1)),
         )
     sesiones_total = [s for sesiones_dia, _ in resultados for s in sesiones_dia]
     avisos = [a for _, avisos_dia in resultados for a in avisos_dia]
+    # No todo se sube a la agenda: el visor de cada cámara trae convocatorias
+    # que comunicaciones nunca publica.
+    sesiones_total = _unir_visor(sesiones_total, visor)
 
     if camara:
         # Sin acentos: "comision" no matcheaba "Comisión" y el filtro de
@@ -2577,10 +2688,15 @@ async def fetch_agenda_camaras(dias: int = 2, camara: str = None):
         return vacio
 
     resultado = {
-        "fuente": f"comunicaciones.congreso.gob.pe/agenda — {dias} días",
+        "fuente": (f"Agenda del Congreso (comunicaciones.congreso.gob.pe/agenda) y Visor de "
+                   f"Sesiones de Comisiones de Diputados y Senado — {dias} días"),
         "sesiones": sesiones_total,
         "total": len(sesiones_total),
     }
+    if fallas_visor:
+        resultado["aviso_fuentes"] = ("No respondió el Visor de Sesiones de: "
+                                      + ", ".join(fallas_visor)
+                                      + ". Puede haber convocatorias que no aparecen aquí.")
     comisiones = sum(1 for x in sesiones_total if x["es_comision"])
     if comisiones:
         # Mistral dejaba afuera la sesión de la Bicameral cuando se pedía una
