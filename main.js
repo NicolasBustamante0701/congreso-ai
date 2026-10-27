@@ -389,7 +389,11 @@ function createWindow() {
     title: 'Diana',
     icon: path.join(__dirname, 'static', 'app-icon.png'),
     backgroundColor: '#ffffff',
-    frame: false,
+    // En Mac: sin barra de título pero con los botones de cerrar, minimizar y
+    // ampliar. En Windows/Linux se mantiene la ventana sin marco.
+    ...(process.platform === 'darwin'
+      ? { titleBarStyle: 'hidden', trafficLightPosition: { x: 16, y: 18 } }
+      : { frame: false }),
     webPreferences: {
       nodeIntegration:  false,
       contextIsolation: true,

@@ -10,11 +10,13 @@ html, body { height: 100%; overflow: hidden; }
   width: 220px; flex-shrink: 0; display: flex; flex-direction: column;
   background: var(--d-surface); border-right: 1px solid var(--d-line);
   padding: 10px 10px 12px; transition: width var(--d-dur) var(--d-ease);
-  /* La ventana no tiene marco (frame:false en main.js): esta franja permite
-     arrastrarla, y los controles marcan no-drag. */
+  /* La ventana no tiene barra de título (ver createWindow en main.js): esta
+     franja permite arrastrarla, y los controles marcan no-drag. */
   -webkit-app-region: drag;
 }
 .rail button, .rail a, .rail input { -webkit-app-region: no-drag; }
+/* Mac: espacio arriba para los botones de cerrar, minimizar y ampliar. */
+.is-mac .rail-brand { padding-top: 40px; }
 .rail-brand { display: flex; align-items: center; gap: 10px; padding: 14px 6px 16px; }
 .rail-logo { width: 30px; height: 30px; display: grid; place-items: center; flex-shrink: 0;
   color: #fff; background: var(--d-accent); border-radius: 8px; }

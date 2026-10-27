@@ -1,5 +1,10 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+// Marca la plataforma para que el CSS deje sitio a los botones de ventana de Mac.
+if (process.platform === 'darwin') {
+  window.addEventListener('DOMContentLoaded', () => document.documentElement.classList.add('is-mac'));
+}
+
 contextBridge.exposeInMainWorld('electronAPI', {
   exportPDF:     (html)    => ipcRenderer.invoke('export-pdf',    html),
   exportWord:    (content) => ipcRenderer.invoke('export-word',   content),
